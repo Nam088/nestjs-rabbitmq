@@ -1,6 +1,6 @@
 {
   "name": "@nam088/nestjs-rabbitmq",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A comprehensive RabbitMQ module for NestJS with decorator-based message handling",
   "author": "Nam088",
   "license": "MIT",
@@ -45,8 +45,7 @@
     "reflect-metadata": "^0.1.13 || ^0.2.0",
     "rxjs": "^7.8.0"
   },
-  "dependencies": {
-  },
+  "dependencies": {},
   "devDependencies": {
     "@nam088/nestjs-eslint": "^2.1.18",
     "@nestjs/common": "^10.3.0",
@@ -88,4 +87,3 @@
     "testEnvironment": "node"
   }
 }
-
