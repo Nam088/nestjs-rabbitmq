@@ -6,24 +6,23 @@ import { createParamDecorator } from '@nestjs/common';
  * @param data - Optional property path to extract from payload
  * @param ctx - Execution context
  */
-export const RabbitPayload = createParamDecorator((data: string | undefined, ctx: ExecutionContext) => {
-    const message = ctx.switchToRpc().getData();
+export function resolveRabbitPayload(data: string | undefined, ctx: ExecutionContext): any {
+    const message: any = ctx.switchToRpc().getData();
 
     if (!message) {
         return null;
     }
 
-    // If message has a content property (ConsumeMessage from amqplib)
     if (message.content) {
         try {
             const payload = JSON.parse(message.content.toString());
-
             return data ? payload?.[data] : payload;
         } catch {
             return message.content.toString();
         }
     }
 
-    // Otherwise return the message itself
     return data ? message?.[data] : message;
-});
+}
+
+export const RabbitPayload = createParamDecorator(resolveRabbitPayload);

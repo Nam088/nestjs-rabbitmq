@@ -20,6 +20,14 @@ import { ConsumerService } from './consumer.service';
           'RABBITMQ_CONNECTION_NAME',
           'basic-use',
         ),
+        // Optimize discovery to only scan annotated classes
+        scanScope: 'annotated',
+        // Declare example exchanges for testing different types
+        exchanges: [
+          { name: 'app.direct', type: 'direct', options: { durable: false } },
+          { name: 'app.topic', type: 'topic', options: { durable: false } },
+          { name: 'app.fanout', type: 'fanout', options: { durable: false } },
+        ],
       }),
     }),
   ],

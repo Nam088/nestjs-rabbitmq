@@ -6,11 +6,13 @@ import { createParamDecorator } from '@nestjs/common';
  * @param data - Optional property path to extract from message
  * @param ctx - Execution context
  */
-export const RabbitMessage = createParamDecorator((data: string | undefined, ctx: ExecutionContext) => {
+export function resolveRabbitMessage(data: string | undefined, ctx: ExecutionContext): any {
     const message = ctx.switchToRpc().getData();
 
     return data ? message?.[data] : message;
-});
+}
+
+export const RabbitMessage = createParamDecorator(resolveRabbitMessage);
 
 /**
  * Alias for RabbitMessage decorator

@@ -79,6 +79,8 @@ export interface RabbitMQModuleAsyncOptions extends Pick<ModuleMetadata, 'import
  * RabbitMQ module configuration options
  */
 export interface RabbitMQModuleOptions {
+    /** Enable auto discovery of decorators (default: true) */
+    autoDiscover?: boolean;
     /** Enable auto-reconnect (default: true) */
     autoReconnect?: boolean;
     /** Connection name for multi-connection support */
@@ -87,10 +89,20 @@ export interface RabbitMQModuleOptions {
     connectionOptions?: ConnectionOptions;
     /** Exchanges to assert on connection */
     exchanges?: ExchangeConfig[];
+    /** Exclude these providers from discovery */
+    excludeProviders?: Array<string | symbol | Type>;
+    /** Limit discovery to these modules (when scanScope includes modules) */
+    includeModules?: Array<string | Type>;
+    /** Limit discovery to these providers (when scanScope includes providers) */
+    includeProviders?: Array<string | symbol | Type>;
+    /** Log level: none | error | warn | log | debug (default: error) */
+    logLevel?: 'debug' | 'error' | 'log' | 'none' | 'warn';
     /** Prefetch count for consumers (default: 1) */
     prefetchCount?: number;
     /** Queues to assert on connection */
     queues?: QueueConfig[];
+    /** Discovery scan scope (default: 'all') */
+    scanScope?: 'all' | 'annotated' | 'modules' | 'providers';
     /** Service discovery options */
     serviceDiscovery?: ServiceDiscoveryOptions;
     /** Connection URI (e.g., 'amqp://localhost:5672') */

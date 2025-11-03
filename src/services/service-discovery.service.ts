@@ -22,6 +22,7 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     private heartbeatInterval?: NodeJS.Timeout;
     private isRegistered = false;
     private readonly logger = new Logger(ServiceDiscoveryService.name);
+    private readonly logLevel: 'debug' | 'error' | 'log' | 'none' | 'warn';
     private readonly services = new Map<string, ServiceInfo>();
     private serviceId: string;
 
@@ -30,6 +31,7 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         private readonly options: ServiceDiscoveryOptions,
     ) {
         this.serviceId = randomUUID();
+        this.logLevel = (options.logLevel as any) ?? 'error';
     }
 
     async onModuleDestroy() {
@@ -209,7 +211,7 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         await this.rabbitMQService.bindQueue(queue, exchange, '*');
         await this.rabbitMQService.consume(queue, this.handleServiceEvent.bind(this));
 
-        this.logger.log('Service discovery setup completed');
+        this.info('Service discovery setup completed');
     }
 
     /**
@@ -246,13 +248,17 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
             const timeSinceLastHeartbeat = now.getTime() - service.lastHeartbeat.getTime();
 
             if (timeSinceLastHeartbeat > timeout) {
-                this.logger.warn(`Service ${service.serviceName} (${serviceId}) is considered dead, removing...`);
+                this.warn(`Service ${service.serviceName} (${serviceId}) is considered dead, removing...`);
                 this.services.delete(serviceId);
             } else if (timeSinceLastHeartbeat > timeout / 2 && service.status === 'healthy') {
                 service.status = 'unhealthy';
-                this.logger.warn(`Service ${service.serviceName} (${serviceId}) marked as unhealthy`);
+                this.warn(`Service ${service.serviceName} (${serviceId}) marked as unhealthy`);
             }
         }
+    }
+
+    private debug(message: string): void {
+        if (this.shouldLog('debug')) this.logger.debug(message);
     }
 
     /**
@@ -270,7 +276,7 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         this.services.delete(this.serviceId);
         this.isRegistered = false;
 
-        this.logger.log(`Service deregistered: ${serviceInfo.serviceName} (${this.serviceId})`);
+        this.info(`Service deregistered: ${serviceInfo.serviceName} (${this.serviceId})`);
     }
 
     /**
@@ -287,7 +293,7 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         switch (type) {
             case ServiceDiscoveryEventType.SERVICE_DEREGISTERED: {
                 this.services.delete(service.serviceId);
-                this.logger.log(`Service removed: ${service.serviceName} (${service.serviceId})`);
+                this.info(`Service removed: ${service.serviceName} (${service.serviceId})`);
                 break;
             }
 
@@ -306,9 +312,13 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
 
             case ServiceDiscoveryEventType.SERVICE_REGISTERED:
                 this.services.set(service.serviceId, service);
-                this.logger.log(`Service discovered: ${service.serviceName} (${service.serviceId})`);
+                this.info(`Service discovered: ${service.serviceName} (${service.serviceId})`);
                 break;
         }
+    }
+
+    private info(message: string): void {
+        if (this.shouldLog('log')) this.logger.log(message);
     }
 
     /**
@@ -322,7 +332,7 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         this.services.set(this.serviceId, serviceInfo);
         this.isRegistered = true;
 
-        this.logger.log(`Service registered: ${serviceInfo.serviceName} (${this.serviceId})`);
+        this.info(`Service registered: ${serviceInfo.serviceName} (${this.serviceId})`);
     }
 
     /**
@@ -340,7 +350,19 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
 
         await this.publishServiceEvent(ServiceDiscoveryEventType.SERVICE_HEARTBEAT, serviceInfo);
 
-        this.logger.debug(`Heartbeat sent for service: ${serviceInfo.serviceName}`);
+        // heartbeat sent
+    }
+
+    private shouldLog(level: 'debug' | 'error' | 'log' | 'warn'): boolean {
+        const order: Record<'debug' | 'error' | 'log' | 'none' | 'warn', number> = {
+            debug: 3,
+            error: 0,
+            log: 2,
+            none: -1,
+            warn: 1,
+        };
+
+        return order[level] <= order[this.logLevel];
     }
 
     /**
@@ -353,7 +375,7 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
             this.cleanupDeadServices();
         }, interval);
 
-        this.logger.log(`Cleanup started with interval: ${interval}ms`);
+        this.debug(`Cleanup started with interval: ${interval}ms`);
     }
 
     /**
@@ -368,7 +390,7 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
             });
         }, interval);
 
-        this.logger.log(`Heartbeat started with interval: ${interval}ms`);
+        this.debug(`Heartbeat started with interval: ${interval}ms`);
     }
 
     /**
@@ -389,5 +411,9 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
             clearInterval(this.heartbeatInterval);
             this.heartbeatInterval = undefined;
         }
+    }
+
+    private warn(message: string): void {
+        if (this.shouldLog('warn')) this.logger.warn(message);
     }
 }

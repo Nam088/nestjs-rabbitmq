@@ -1,5 +1,7 @@
 export * from './inject-rabbitmq.decorator';
 
+export * from './rabbit-controller.decorator';
+
 export * from './rabbit-handler.decorator';
 
 export * from './rabbit-message.decorator';

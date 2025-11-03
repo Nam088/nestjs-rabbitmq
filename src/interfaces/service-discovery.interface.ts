@@ -62,6 +62,9 @@ export interface ServiceDiscoveryOptions {
      */
     host?: string;
 
+    /** Log level for discovery internals */
+    logLevel?: 'debug' | 'error' | 'log' | 'none' | 'warn';
+
     /**
      * Service metadata
      */

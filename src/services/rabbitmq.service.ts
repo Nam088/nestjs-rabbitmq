@@ -14,12 +14,16 @@ import { PublishOptions, RpcOptions } from '../interfaces/rabbitmq-options.inter
 export class RabbitMQService implements OnModuleDestroy {
     private channel: ChannelWrapper;
     private readonly logger = new Logger(RabbitMQService.name);
+    private readonly logLevel: 'debug' | 'error' | 'log' | 'none' | 'warn';
     private readonly rpcQueues = new Map<string, any>();
 
     constructor(
         private readonly connectionManager: AmqpConnectionManager,
         private readonly connectionName: string,
-    ) {}
+        logLevel: 'debug' | 'error' | 'log' | 'none' | 'warn' = 'error',
+    ) {
+        this.logLevel = logLevel;
+    }
 
     /**
      * Module destroy lifecycle hook
@@ -48,28 +52,34 @@ export class RabbitMQService implements OnModuleDestroy {
     private async getReplyQueue(): Promise<string> {
         const replyQueue = 'amq.rabbitmq.reply-to';
 
+        // setup direct-reply-to consumer
+
         await this.channel.consume(
             replyQueue,
             (message: Message | null) => {
-                if (!message) {
-                    return;
-                }
+                if (!message) return;
 
                 const { correlationId } = message.properties;
+                // reply received
+
                 const callbacks = this.rpcQueues.get(replyQueue);
 
-                if (callbacks && callbacks.has(correlationId)) {
-                    const callback = callbacks.get(correlationId);
-                    const response = this.deserializeMessage(message.content);
+                if (!callbacks) return;
 
-                    callback(response);
-                    callbacks.delete(correlationId);
-                }
+                if (!callbacks.has(correlationId)) return;
 
-                this.channel.ack(message);
+                const callback = callbacks.get(correlationId);
+                const response = this.deserializeMessage(message.content);
+
+                callback(response);
+                callbacks.delete(correlationId);
+                // callback completed
             },
-            { noAck: false },
+            // Direct-reply-to requires noAck=true
+            { noAck: true },
         );
+
+        // reply queue ready
 
         return replyQueue;
     }
@@ -91,7 +101,7 @@ export class RabbitMQService implements OnModuleDestroy {
 
             await this.channel.publish(exchange, routingKey, content, publishOptions);
 
-            this.logger.debug(`Published message to exchange: ${exchange}, routingKey: ${routingKey}`);
+            // published
 
             return true;
         } catch (error) {
@@ -143,7 +153,7 @@ export class RabbitMQService implements OnModuleDestroy {
             durable: true,
             ...options,
         });
-        this.logger.debug(`Asserted exchange: ${exchange} (${type})`);
+        // asserted
     }
 
     /**
@@ -156,7 +166,7 @@ export class RabbitMQService implements OnModuleDestroy {
             durable: true,
             ...options,
         });
-        this.logger.debug(`Asserted queue: ${queue}`);
+        // asserted
     }
 
     /**
@@ -167,14 +177,14 @@ export class RabbitMQService implements OnModuleDestroy {
      */
     async bindQueue(queue: string, exchange: string, routingKey: string): Promise<void> {
         await this.channel.bindQueue(queue, exchange, routingKey);
-        this.logger.debug(`Bound queue ${queue} to exchange ${exchange} with key ${routingKey}`);
+        // bound
     }
 
     /**
      * Close the connection
      */
     async close(): Promise<void> {
-        this.logger.log(`Closing RabbitMQ connection: ${this.connectionName}`);
+        this.info(`Closing RabbitMQ connection: ${this.connectionName}`);
         await this.channel?.close();
         await this.connectionManager?.close();
     }
@@ -214,25 +224,25 @@ export class RabbitMQService implements OnModuleDestroy {
             },
         );
 
-        this.logger.log(`Started consuming from queue: ${queue}`);
+        this.info(`Started consuming from queue: ${queue}`);
     }
 
     /**
      * Initialize the channel
      */
     async initialize(): Promise<void> {
-        this.logger.log(`Initializing RabbitMQ channel for connection: ${this.connectionName}`);
+        this.info(`Initializing RabbitMQ channel for connection: ${this.connectionName}`);
 
         this.channel = this.connectionManager.createChannel({
             json: false,
             setup: async (channel: ConfirmChannel) => {
                 await channel.prefetch(1);
-                this.logger.log(`Channel setup complete for: ${this.connectionName}`);
+                this.info(`Channel setup complete for: ${this.connectionName}`);
             },
         });
 
         await this.channel.waitForConnect();
-        this.logger.log(`RabbitMQ channel connected for: ${this.connectionName}`);
+        this.info(`RabbitMQ channel connected for: ${this.connectionName}`);
     }
 
     /**
@@ -251,23 +261,39 @@ export class RabbitMQService implements OnModuleDestroy {
     async request<T = any>(queue: string, message: any, options: RpcOptions = {}): Promise<T> {
         const { publishOptions = {}, timeout = 30000 } = options;
         const correlationId = randomUUID();
+
+        // start request
+
         const replyQueue = await this.getReplyQueue();
 
+        // reply queue ready
+
         return new Promise<T>(async (resolve, reject) => {
+            // request initialized
+
             const timeoutId = setTimeout(() => {
-                this.rpcQueues.get(replyQueue)?.delete(correlationId);
+                const callbacks = this.rpcQueues.get(replyQueue);
+
+                this.logger.error(`RPC timeout after ${timeout}ms (correlationId=${correlationId})`);
+                callbacks?.delete(correlationId);
                 reject(new Error(`RPC timeout after ${timeout}ms`));
             }, timeout);
 
             // Store callback
             if (!this.rpcQueues.has(replyQueue)) {
                 this.rpcQueues.set(replyQueue, new Map());
+                // created map
             }
 
-            this.rpcQueues.get(replyQueue).set(correlationId, (response: any) => {
+            const callbackMap = this.rpcQueues.get(replyQueue)!;
+
+            callbackMap.set(correlationId, (response: any) => {
                 clearTimeout(timeoutId);
+                // callback invoked
                 resolve(response);
             });
+
+            // stored
 
             // Send request
             try {
@@ -278,7 +304,11 @@ export class RabbitMQService implements OnModuleDestroy {
                 });
             } catch (error) {
                 clearTimeout(timeoutId);
-                this.rpcQueues.get(replyQueue)?.delete(correlationId);
+                callbackMap.delete(correlationId);
+                this.logger.error(
+                    `[RPC] Send failed: correlationId=${correlationId}, queue=${queue}, error=${String((error as Error)?.message ?? error)}`,
+                    (error as Error)?.stack,
+                );
                 reject(error instanceof Error ? error : new Error(String(error)));
             }
         });
@@ -300,12 +330,36 @@ export class RabbitMQService implements OnModuleDestroy {
 
             await this.channel.sendToQueue(queue, content, sendOptions);
 
-            this.logger.debug(`Sent message to queue: ${queue}`);
+            // sent
 
             return true;
         } catch (error) {
             this.logger.error(`Failed to send message to queue ${queue}`, error.stack);
             throw error;
         }
+    }
+
+    private debug(message: string): void {
+        if (this.shouldLog('debug')) this.logger.debug(message);
+    }
+
+    private info(message: string): void {
+        if (this.shouldLog('log')) this.logger.log(message);
+    }
+
+    private shouldLog(level: 'debug' | 'error' | 'log' | 'warn'): boolean {
+        const order: Record<'debug' | 'error' | 'log' | 'none' | 'warn', number> = {
+            debug: 3,
+            error: 0,
+            log: 2,
+            none: -1,
+            warn: 1,
+        };
+
+        return order[level] <= order[this.logLevel];
+    }
+
+    private warn(message: string): void {
+        if (this.shouldLog('warn')) this.logger.warn(message);
     }
 }

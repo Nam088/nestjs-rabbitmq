@@ -1,5 +1,4 @@
-import { RabbitPayload } from './rabbit-payload.decorator';
-import { ExecutionContext } from '@nestjs/common';
+import { RabbitPayload, resolveRabbitPayload } from './rabbit-payload.decorator';
 import 'reflect-metadata';
 
 describe('RabbitPayload Decorator', () => {
@@ -7,67 +6,48 @@ describe('RabbitPayload Decorator', () => {
         expect(RabbitPayload).toBeDefined();
     });
 
-    it('should create a parameter decorator', () => {
-        class TestClass {
-            testMethod(@RabbitPayload() payload: any) {
-                return payload;
-            }
-        }
-
-        expect(TestClass).toBeDefined();
+    it('should return null when message is falsy', () => {
+        const ctx: any = { switchToRpc: () => ({ getData: () => null }) };
+        const result = resolveRabbitPayload(undefined, ctx);
+        expect(result).toBeNull();
     });
 
-    it('should extract parameter with property name', () => {
-        class TestClass {
-            testMethod(@RabbitPayload('name') name: string) {
-                return name;
-            }
-        }
+    it('should parse JSON from message.content buffer', () => {
+        const payload = { id: 1, name: 'test' };
+        const msg = { content: Buffer.from(JSON.stringify(payload)) };
+        const ctx: any = { switchToRpc: () => ({ getData: () => msg }) };
 
-        expect(TestClass).toBeDefined();
+        const result = resolveRabbitPayload(undefined, ctx);
+        expect(result).toEqual(payload);
     });
 
-    it('should work with multiple parameters', () => {
-        class TestClass {
-            testMethod(
-                @RabbitPayload() fullPayload: any,
-                @RabbitPayload('id') id: number,
-                @RabbitPayload('name') name: string,
-            ) {
-                return { fullPayload, id, name };
-            }
-        }
+    it('should extract property from parsed JSON when path provided', () => {
+        const payload = { id: 2, name: 'alice' };
+        const msg = { content: Buffer.from(JSON.stringify(payload)) };
+        const ctx: any = { switchToRpc: () => ({ getData: () => msg }) };
 
-        expect(TestClass).toBeDefined();
+        const name = resolveRabbitPayload('name', ctx);
+        expect(name).toBe('alice');
     });
 
-    it('should be usable in controller methods', () => {
-        class MessageController {
-            handleMessage(@RabbitPayload() data: any) {
-                return { received: data };
-            }
-        }
+    it('should return raw string if JSON parse fails', () => {
+        const raw = 'not-json';
+        const msg = { content: Buffer.from(raw) };
+        const ctx: any = { switchToRpc: () => ({ getData: () => msg }) };
 
-        const controller = new MessageController();
-        expect(controller).toBeDefined();
-        expect(controller.handleMessage).toBeDefined();
+        const result = resolveRabbitPayload(undefined, ctx);
+        expect(result).toBe(raw);
     });
 
-    it('should work with complex types', () => {
-        interface UserPayload {
-            id: number;
-            name: string;
-            email: string;
-        }
+    it('should return message itself when no content field', () => {
+        const msg = { id: 3, name: 'bob' };
+        const ctx: any = { switchToRpc: () => ({ getData: () => msg }) };
 
-        class UserHandler {
-            processUser(@RabbitPayload() user: UserPayload) {
-                return user;
-            }
-        }
+        const full = resolveRabbitPayload(undefined, ctx);
+        const id = resolveRabbitPayload('id', ctx);
 
-        const handler = new UserHandler();
-        expect(handler).toBeDefined();
+        expect(full).toEqual(msg);
+        expect(id).toBe(3);
     });
 });
 

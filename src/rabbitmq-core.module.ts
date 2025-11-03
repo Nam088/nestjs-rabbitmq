@@ -1,6 +1,6 @@
 import { ModuleRef, ModulesContainer } from '@nestjs/core';
 
-import { DynamicModule, Global, Logger, Module, OnModuleInit, Provider } from '@nestjs/common';
+import { DynamicModule, Global, Logger, Module, OnApplicationBootstrap, Provider } from '@nestjs/common';
 
 import { MetadataScanner } from '@nestjs/core/metadata-scanner';
 import * as amqp from 'amqp-connection-manager';
@@ -8,6 +8,8 @@ import { AmqpConnectionManager } from 'amqp-connection-manager';
 
 import { RabbitMQService } from './services/rabbitmq.service';
 import { ServiceDiscoveryService } from './services/service-discovery.service';
+
+import { RABBIT_CONTROLLER_KEY } from './decorators/rabbit-controller.decorator';
 
 import {
     RabbitMQModuleAsyncOptions,
@@ -28,7 +30,7 @@ import {
  */
 @Global()
 @Module({})
-export class RabbitMQCoreModule implements OnModuleInit {
+export class RabbitMQCoreModule implements OnApplicationBootstrap {
     private readonly logger = new Logger(RabbitMQCoreModule.name);
     private readonly metadataScanner = new MetadataScanner();
 
@@ -56,7 +58,7 @@ export class RabbitMQCoreModule implements OnModuleInit {
             inject: [`${RABBITMQ_CONNECTION_MANAGER}_${connectionName}`],
             provide: `${RABBITMQ_SERVICE}_${connectionName}`,
             useFactory: async (connectionManager: AmqpConnectionManager) => {
-                const service = new RabbitMQService(connectionManager, connectionName);
+                const service = new RabbitMQService(connectionManager, connectionName, options.logLevel ?? 'error');
 
                 await service.initialize();
 
@@ -129,7 +131,11 @@ export class RabbitMQCoreModule implements OnModuleInit {
             ],
             provide: `${RABBITMQ_SERVICE}_${connectionName}`,
             useFactory: async (connectionManager: AmqpConnectionManager, moduleOptions: RabbitMQModuleOptions) => {
-                const service = new RabbitMQService(connectionManager, connectionName);
+                const service = new RabbitMQService(
+                    connectionManager,
+                    connectionName,
+                    moduleOptions.logLevel ?? 'error',
+                );
 
                 await service.initialize();
 
@@ -165,28 +171,24 @@ export class RabbitMQCoreModule implements OnModuleInit {
     }
 
     /**
-     * Discover and register subscribers using internal scanner
+     * Discover and register subscribers using internal scanner after app bootstrap
      */
-    async onModuleInit(): Promise<void> {
-        const SUBSCRIBE_KEY = 'RABBITMQ_SUBSCRIBE_METADATA';
+    async onApplicationBootstrap(): Promise<void> {
+        const moduleOptions: RabbitMQModuleOptions | undefined = this.moduleRef.get(
+            `${RABBITMQ_MODULE_OPTIONS}_${DEFAULT_CONNECTION_NAME}`,
+            { strict: false },
+        );
+
+        const autoDiscover = moduleOptions?.autoDiscover !== false;
+
+        if (!autoDiscover) {
+            return;
+        }
 
         for (const moduleRef of this.modulesContainer.values()) {
-            for (const provider of moduleRef.providers.values()) {
-                const instance = provider.instance as Record<string, unknown> | undefined;
-                const prototype = instance && Object.getPrototypeOf(instance);
+            if (!this.shouldScanModule(moduleRef, moduleOptions)) continue;
 
-                if (!instance || !prototype) continue;
-
-                const methodNames = this.metadataScanner.getAllMethodNames(prototype);
-
-                for (const methodName of methodNames) {
-                    const options: any = Reflect.getMetadata(SUBSCRIBE_KEY, instance, methodName);
-
-                    if (!options) continue;
-
-                    void this.registerDiscoveredHandler(instance, methodName, options);
-                }
-            }
+            await this.processModuleProviders(moduleRef, moduleOptions);
         }
     }
 
@@ -232,6 +234,41 @@ export class RabbitMQCoreModule implements OnModuleInit {
         return [];
     }
 
+    private async processModuleProviders(moduleRef: any, options?: RabbitMQModuleOptions): Promise<void> {
+        for (const provider of moduleRef.providers.values()) {
+            if (!this.shouldScanProvider(provider, options)) continue;
+
+            const instance = provider.instance as Record<string, unknown> | undefined;
+            const prototype = instance && Object.getPrototypeOf(instance);
+
+            if (!instance || !prototype) {
+                continue;
+            }
+
+            this.processProviderMethods(instance, prototype);
+        }
+    }
+
+    private processProviderMethods(instance: Record<string, unknown>, prototype: any): void {
+        const SUBSCRIBE_KEY = 'RABBITMQ_SUBSCRIBE_METADATA';
+        const RPC_KEY = 'RABBIT_RPC_METADATA';
+
+        const methodNames = this.metadataScanner.getAllMethodNames(prototype);
+
+        for (const methodName of methodNames) {
+            // Get method descriptor (function) from prototype - SetMetadata stores on the function itself
+            const methodDescriptor = prototype[methodName];
+
+            // Read metadata directly from method descriptor (like in tests: TestClass.prototype.handleRPC)
+            const subOptions: any = methodDescriptor ? Reflect.getMetadata(SUBSCRIBE_KEY, methodDescriptor) : null;
+            const rpcOptions: any = methodDescriptor ? Reflect.getMetadata(RPC_KEY, methodDescriptor) : null;
+
+            if (subOptions) void this.registerDiscoveredHandler(instance, methodName, subOptions);
+
+            if (rpcOptions) void this.registerDiscoveredRpcHandler(instance, methodName, rpcOptions);
+        }
+    }
+
     private async registerDiscoveredHandler(
         instance: Record<string, unknown>,
         methodName: string,
@@ -275,5 +312,129 @@ export class RabbitMQCoreModule implements OnModuleInit {
                 error?.stack,
             );
         }
+    }
+
+    private async registerDiscoveredRpcHandler(
+        instance: Record<string, unknown>,
+        methodName: string,
+        options: any,
+    ): Promise<void> {
+        const connectionName = options.connectionName || DEFAULT_CONNECTION_NAME;
+        const rabbitService: RabbitMQService = this.moduleRef.get(`${RABBITMQ_SERVICE}_${connectionName}`, {
+            strict: false,
+        });
+
+        if (!rabbitService) {
+            this.logger.error(`RabbitMQ service not found for connection: ${connectionName}`);
+
+            return;
+        }
+
+        if (options.queue) {
+            await rabbitService.assertQueue(options.queue, options.queueOptions);
+        }
+
+        const handler = (instance as any)[methodName].bind(instance);
+        const channel: any = rabbitService.getChannel();
+
+        await channel.consume(
+            options.queue,
+            async (msg: any) => {
+                if (!msg) {
+                    return;
+                }
+
+                try {
+                    // message received
+                    const payloadStr = msg.content?.toString();
+                    let payload: unknown = payloadStr;
+
+                    try {
+                        payload = JSON.parse(payloadStr);
+                    } catch {
+                        this.logger.error(`Failed to parse payload as JSON, using raw string: ${payloadStr}`);
+                    }
+
+                    const response = await handler(payload);
+                    const responseBuffer = Buffer.isBuffer(response)
+                        ? response
+                        : Buffer.from(JSON.stringify(response ?? null));
+
+                    if (msg.properties?.replyTo) {
+                        // send reply
+                        await channel.sendToQueue(msg.properties.replyTo, responseBuffer, {
+                            persistent: false,
+                            correlationId: msg.properties.correlationId,
+                        });
+                    }
+
+                    channel.ack?.(msg);
+                } catch (error: any) {
+                    this.logger.error(
+                        `Failed to process RPC ${(instance.constructor && (instance.constructor as any).name) || 'Unknown'}.${methodName}`,
+                        error?.stack,
+                    );
+                    channel.nack?.(msg, false, false);
+                }
+            },
+            {
+                noAck: false,
+                prefetch: options.prefetchCount || 1,
+                ...options.consumeOptions,
+            },
+        );
+
+        this.logger.log(`Registered RPC handler: ${instance.constructor?.name}.${methodName} -> ${options.queue}`);
+    }
+
+    private shouldScanModule(moduleRef: any, options?: RabbitMQModuleOptions): boolean {
+        const scope = options?.scanScope ?? 'all';
+
+        if (scope === 'all') return true;
+
+        if (scope === 'modules' || scope === 'annotated' || scope === 'providers') {
+            const include = options?.includeModules;
+
+            if (!include || include.length === 0) return true;
+
+            const name: string | undefined = moduleRef?.metatype?.name;
+
+            return include.some((m: any) => (typeof m === 'string' ? m === name : m === moduleRef?.metatype));
+        }
+
+        return true;
+    }
+
+    private shouldScanProvider(provider: any, options?: RabbitMQModuleOptions): boolean {
+        const scope = options?.scanScope ?? 'all';
+        const token = provider?.name || provider?.metatype?.name || provider?.token;
+
+        // include/exclude filters
+        if (options?.excludeProviders && options.excludeProviders.length > 0) {
+            if (
+                options.excludeProviders.some((p: any) =>
+                    typeof p === 'string' ? p === token : p === provider?.metatype,
+                )
+            ) {
+                return false;
+            }
+        }
+
+        if (options?.includeProviders && options.includeProviders.length > 0) {
+            const included = options.includeProviders.some((p: any) =>
+                typeof p === 'string' ? p === token : p === provider?.metatype,
+            );
+
+            if (!included) return false;
+        }
+
+        if (scope === 'annotated') {
+            const instance = provider.instance as Record<string, unknown> | undefined;
+            const ctor = instance?.constructor ?? provider?.metatype;
+
+            return !!(ctor && Reflect.getMetadata && Reflect.getMetadata(RABBIT_CONTROLLER_KEY, ctor));
+        }
+
+        return true;
     }
 }

@@ -7,7 +7,7 @@ A comprehensive and production-ready RabbitMQ module for NestJS with decorator-b
 **Decorator-Based API** - Use `@RabbitSubscribe` to handle messages declaratively  
 **Multi-Connection Support** - Manage multiple RabbitMQ connections  
 **Health Checks** - Built-in health indicators for monitoring  
-**Auto-Discovery** - Automatic message handler registration  
+**Auto-Discovery** - Automatic message handler registration (configurable scan scope)  
 **TypeScript First** - Full type safety and IntelliSense support  
 **Exchange Patterns** - Support for direct, topic, fanout exchanges  
 **Message Patterns** - Pub/Sub, Request/Reply, Work Queues  
@@ -195,19 +195,35 @@ async processTask(task: any) {
 
 ### RPC Pattern
 
+**Note**: For RPC pattern, use `@RabbitRPC` decorator. The queue will be automatically declared when the handler is registered.
+
 ```typescript
 // Request
-const result = await rabbitmq.request('rpc-queue', { operation: 'calculate' });
+const result = await rabbitmq.request('calculator-rpc', { a: 10, b: 5, op: 'add' });
 
-// Reply
-@RabbitSubscribe({
-  queue: 'rpc-queue',
-  rpc: true,
+// Reply Handler
+@RabbitRPC({
+  queue: 'calculator-rpc',
+  prefetchCount: 1,
 })
-async handleRPC(data: any) {
+async handleRPC(@RabbitPayload() data: { a: number; b: number; op: string }) {
   const result = performCalculation(data);
-  return result; // Automatically sends reply
+  return result; // Automatically sends reply back to requestor
 }
+```
+
+#### Minimal example (add two numbers)
+
+```typescript
+// Handler
+@RabbitRPC({ queue: 'math.add', prefetchCount: 1 })
+add(@RabbitPayload() payload: { a: number; b: number }) {
+  return { ok: true, sum: Number(payload?.a ?? 0) + Number(payload?.b ?? 0) };
+}
+
+// Client
+const res = await rabbitmq.request('math.add', { a: 5, b: 7 });
+// -> { ok: true, sum: 12 }
 ```
 
 ## Advanced Decorators
@@ -315,6 +331,47 @@ export class MessageProcessor {
 }
 ```
 
+## Discovery & Performance
+
+For large applications, you can limit scanning scope to speed up bootstrap and avoid scanning the whole app.
+
+### Options (RabbitMQModuleOptions)
+
+```typescript
+RabbitMQModule.forRoot({
+  uri: 'amqp://localhost:5672',
+  // Disable discovery entirely (manual registration only)
+  // autoDiscover: false,
+
+  // Limit what to scan
+  scanScope: 'all', // 'all' | 'modules' | 'providers' | 'annotated'
+
+  // If using 'modules', specify which modules to scan
+  // includeModules: [AppModule, 'PaymentsModule'],
+
+  // If using 'providers', specify which providers to scan (and/or exclude)
+  // includeProviders: [ConsumerService, 'BillingConsumerService'],
+  // excludeProviders: ['SomeHeavyProvider'],
+});
+```
+
+### Annotated-only scanning
+
+Use the `@RabbitController()` class decorator to mark consumer classes. When `scanScope: 'annotated'` is set, only these classes are scanned.
+
+```typescript
+import { RabbitController, RabbitSubscribe, RabbitRPC } from '@nam088/nestjs-rabbitmq';
+
+@RabbitController()
+export class ConsumerService {
+  @RabbitSubscribe({ queue: 'app.queue' })
+  onMessage(msg: any) {}
+
+  @RabbitRPC({ queue: 'app.rpc' })
+  onRpc(@RabbitPayload() data: any) { return { ok: true, data }; }
+}
+```
+
 ### Multi-Connection with Decorators
 
 ```typescript
@@ -393,15 +450,13 @@ export class HealthController {
 - `@RabbitHandler(options)` - Generic message handler decorator
 - `@RabbitPayload(property?)` - Extract payload from message
 - `@RabbitMessage(property?)` / `@RabbitContext(property?)` - Get full message context
+- `@RabbitController()` - Mark class for annotated-only discovery
 
 ## Examples
 
 Check out the [examples](./examples) directory for complete working examples:
 
-- [Basic Usage](./examples/basic-usage) - Simple pub/sub example
-- [Multiple Connections](./examples/multi-connection) - Working with multiple connections
-- [RPC Pattern](./examples/rpc-pattern) - Request-reply pattern
-- [Error Handling](./examples/error-handling) - Retry and dead letter queues
+- [Basic Use](./examples/basic-use) - Simple pub/sub and RPC (includes math.add)
 
 ## Contributing
 
