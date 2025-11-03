@@ -1,6 +1,8 @@
+import { ModuleRef, ModulesContainer } from '@nestjs/core';
+
 import { DynamicModule, Global, Logger, Module, OnModuleInit, Provider } from '@nestjs/common';
 
-import { DiscoveryModule, DiscoveryService } from '@golevelup/nestjs-discovery';
+import { MetadataScanner } from '@nestjs/core/metadata-scanner';
 import * as amqp from 'amqp-connection-manager';
 import { AmqpConnectionManager } from 'amqp-connection-manager';
 
@@ -11,7 +13,6 @@ import {
     RabbitMQModuleAsyncOptions,
     RabbitMQModuleOptions,
     RabbitMQOptionsFactory,
-    RabbitSubscribeOptions,
 } from './interfaces/rabbitmq-options.interface';
 
 import {
@@ -20,22 +21,20 @@ import {
     RABBITMQ_MODULE_OPTIONS,
     RABBITMQ_SERVICE,
     RABBITMQ_SERVICE_DISCOVERY,
-    RABBITMQ_SUBSCRIBE_METADATA,
 } from './constants';
 
 /**
  * Core module for RabbitMQ
  */
 @Global()
-@Module({
-    imports: [DiscoveryModule],
-})
+@Module({})
 export class RabbitMQCoreModule implements OnModuleInit {
     private readonly logger = new Logger(RabbitMQCoreModule.name);
+    private readonly metadataScanner = new MetadataScanner();
 
     constructor(
-        private readonly discoveryService: DiscoveryService,
-        private readonly moduleRef: any,
+        private readonly moduleRef: ModuleRef,
+        private readonly modulesContainer: ModulesContainer,
     ) {}
 
     /**
@@ -157,9 +156,6 @@ export class RabbitMQCoreModule implements OnModuleInit {
         const providers = [...asyncProviders, connectionManagerProvider, serviceProvider];
         const exports = [serviceProvider];
 
-        // Service discovery will be added dynamically after module options are resolved
-        // This is handled in the onModuleInit lifecycle hook
-
         return {
             imports: options.imports || [],
             providers,
@@ -169,21 +165,29 @@ export class RabbitMQCoreModule implements OnModuleInit {
     }
 
     /**
-     * Module initialization - discover and register subscribers
+     * Discover and register subscribers using internal scanner
      */
     async onModuleInit(): Promise<void> {
-        this.logger.log('Discovering RabbitMQ subscribers...');
+        const SUBSCRIBE_KEY = 'RABBITMQ_SUBSCRIBE_METADATA';
 
-        const subscribers =
-            await this.discoveryService.providerMethodsWithMetaAtKey<RabbitSubscribeOptions>(
-                RABBITMQ_SUBSCRIBE_METADATA,
-            );
+        for (const moduleRef of this.modulesContainer.values()) {
+            for (const provider of moduleRef.providers.values()) {
+                const instance = provider.instance as Record<string, unknown> | undefined;
+                const prototype = instance && Object.getPrototypeOf(instance);
 
-        for (const subscriber of subscribers) {
-            await this.registerSubscriber(subscriber);
+                if (!instance || !prototype) continue;
+
+                const methodNames = this.metadataScanner.getAllMethodNames(prototype);
+
+                for (const methodName of methodNames) {
+                    const options: any = Reflect.getMetadata(SUBSCRIBE_KEY, instance, methodName);
+
+                    if (!options) continue;
+
+                    void this.registerDiscoveredHandler(instance, methodName, options);
+                }
+            }
         }
-
-        this.logger.log(`Registered ${subscribers.length} RabbitMQ subscriber(s)`);
     }
 
     /**
@@ -228,14 +232,11 @@ export class RabbitMQCoreModule implements OnModuleInit {
         return [];
     }
 
-    /**
-     * Register a subscriber
-     */
-    private async registerSubscriber(subscriber: any): Promise<void> {
-        const { discoveredMethod, meta: options } = subscriber;
-        const { handler, methodName, parentClass } = discoveredMethod;
-        const { instance } = parentClass;
-
+    private async registerDiscoveredHandler(
+        instance: Record<string, unknown>,
+        methodName: string,
+        options: any,
+    ): Promise<void> {
         const connectionName = options.connectionName || DEFAULT_CONNECTION_NAME;
         const rabbitService: RabbitMQService = this.moduleRef.get(`${RABBITMQ_SERVICE}_${connectionName}`, {
             strict: false,
@@ -248,43 +249,31 @@ export class RabbitMQCoreModule implements OnModuleInit {
         }
 
         try {
-            // Assert queue
-            await rabbitService.assertQueue(options.queue, options.queueOptions);
+            if (options.queue) {
+                await rabbitService.assertQueue(options.queue, options.queueOptions);
+            }
 
-            // Bind to exchange if specified
-            if (options.exchange && options.routingKey) {
+            if (options.exchange && options.routingKey && options.queue) {
                 await rabbitService.bindQueue(options.queue, options.exchange, options.routingKey);
             }
 
-            // Setup consumer
-            await rabbitService.consume(
-                options.queue,
-                async (message: any) => {
-                    try {
-                        const result = await handler.call(instance, message);
+            const handler = (instance as any)[methodName].bind(instance);
 
-                        // Handle RPC reply
-                        if (options.rpc && result !== undefined) {
-                            // RPC reply logic will be handled by service
-                            return result;
-                        }
-                    } catch (error) {
-                        this.logger.error(`Error in subscriber ${parentClass.name}.${methodName}`, error.stack);
-
-                        // Call custom error handler if provided
-                        if (options.errorHandler) {
-                            await options.errorHandler(error, message);
-                        }
-
-                        throw error;
-                    }
-                },
-                options.consumeOptions,
+            if (options.queue) {
+                await rabbitService.consume(
+                    options.queue,
+                    async (message: unknown) => handler(message),
+                    options.consumeOptions,
+                );
+                this.logger.log(
+                    `Registered subscriber: ${instance.constructor?.name}.${methodName} -> ${options.queue}`,
+                );
+            }
+        } catch (error: any) {
+            this.logger.error(
+                `Failed to register subscriber ${(instance.constructor && (instance.constructor as any).name) || 'Unknown'}.${methodName}`,
+                error?.stack,
             );
-
-            this.logger.log(`Registered subscriber: ${parentClass.name}.${methodName} -> ${options.queue}`);
-        } catch (error) {
-            this.logger.error(`Failed to register subscriber ${parentClass.name}.${methodName}`, error.stack);
         }
     }
 }
