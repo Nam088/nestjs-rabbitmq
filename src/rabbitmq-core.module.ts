@@ -18,6 +18,7 @@ import {
     DEFAULT_CONNECTION_NAME,
     RABBITMQ_CONNECTION_MANAGER,
     RABBITMQ_MODULE_OPTIONS,
+    RABBITMQ_SERVICE,
     RABBITMQ_SERVICE_DISCOVERY,
     RABBITMQ_SUBSCRIBE_METADATA,
 } from './constants';
@@ -54,7 +55,7 @@ export class RabbitMQCoreModule implements OnModuleInit {
 
         const serviceProvider: Provider = {
             inject: [`${RABBITMQ_CONNECTION_MANAGER}_${connectionName}`],
-            provide: `${RABBITMQ_CONNECTION_MANAGER}_${connectionName}`,
+            provide: `${RABBITMQ_SERVICE}_${connectionName}`,
             useFactory: async (connectionManager: AmqpConnectionManager) => {
                 const service = new RabbitMQService(connectionManager, connectionName);
 
@@ -89,7 +90,7 @@ export class RabbitMQCoreModule implements OnModuleInit {
         // Add service discovery if enabled
         if (options.serviceDiscovery?.enabled) {
             const discoveryProvider: Provider = {
-                inject: [`${RABBITMQ_CONNECTION_MANAGER}_${connectionName}`],
+                inject: [`${RABBITMQ_SERVICE}_${connectionName}`],
                 provide: `${RABBITMQ_SERVICE_DISCOVERY}_${connectionName}`,
                 useFactory: (rabbitService: RabbitMQService) =>
                     new ServiceDiscoveryService(rabbitService, options.serviceDiscovery!),
@@ -127,7 +128,7 @@ export class RabbitMQCoreModule implements OnModuleInit {
                 `${RABBITMQ_CONNECTION_MANAGER}_${connectionName}`,
                 `${RABBITMQ_MODULE_OPTIONS}_${connectionName}`,
             ],
-            provide: `${RABBITMQ_CONNECTION_MANAGER}_${connectionName}`,
+            provide: `${RABBITMQ_SERVICE}_${connectionName}`,
             useFactory: async (connectionManager: AmqpConnectionManager, moduleOptions: RabbitMQModuleOptions) => {
                 const service = new RabbitMQService(connectionManager, connectionName);
 
@@ -236,7 +237,7 @@ export class RabbitMQCoreModule implements OnModuleInit {
         const { instance } = parentClass;
 
         const connectionName = options.connectionName || DEFAULT_CONNECTION_NAME;
-        const rabbitService: RabbitMQService = this.moduleRef.get(`${RABBITMQ_CONNECTION_MANAGER}_${connectionName}`, {
+        const rabbitService: RabbitMQService = this.moduleRef.get(`${RABBITMQ_SERVICE}_${connectionName}`, {
             strict: false,
         });
 
