@@ -1,417 +1,412 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import type { TestingModule } from '@nestjs/testing';
+import { Test } from '@nestjs/testing';
+
 import { RabbitMQService } from './rabbitmq.service';
-import { AmqpConnectionManager } from 'amqp-connection-manager';
+
+import type { AmqpConnectionManager } from 'amqp-connection-manager';
 
 describe('RabbitMQService', () => {
-  let service: RabbitMQService;
-  let mockConnectionManager: Partial<AmqpConnectionManager>;
-  let mockChannel: any;
+    let service: RabbitMQService;
+    let mockConnectionManager: Partial<AmqpConnectionManager>;
+    let mockChannel: any;
 
-  beforeEach(async () => {
-    mockChannel = {
-      waitForConnect: jest.fn().mockResolvedValue(undefined),
-      publish: jest.fn().mockResolvedValue(true),
-      sendToQueue: jest.fn().mockResolvedValue(true),
-      assertExchange: jest.fn().mockResolvedValue({ exchange: 'test' }),
-      assertQueue: jest.fn().mockResolvedValue({ queue: 'test', messageCount: 0, consumerCount: 0 }),
-      bindQueue: jest.fn().mockResolvedValue({}),
-      consume: jest.fn().mockResolvedValue({ consumerTag: 'test' }),
-      ack: jest.fn(),
-      nack: jest.fn(),
-      close: jest.fn().mockResolvedValue(undefined),
-    };
+    beforeEach(async () => {
+        mockChannel = {
+            ack: jest.fn(),
+            assertExchange: jest.fn().mockResolvedValue({ exchange: 'test' }),
+            assertQueue: jest.fn().mockResolvedValue({ consumerCount: 0, messageCount: 0, queue: 'test' }),
+            bindQueue: jest.fn().mockResolvedValue({}),
+            close: jest.fn().mockResolvedValue(undefined),
+            consume: jest.fn().mockResolvedValue({ consumerTag: 'test' }),
+            nack: jest.fn(),
+            publish: jest.fn().mockResolvedValue(true),
+            sendToQueue: jest.fn().mockResolvedValue(true),
+            waitForConnect: jest.fn().mockResolvedValue(undefined),
+        };
 
-    mockConnectionManager = {
-      createChannel: jest.fn().mockReturnValue(mockChannel),
-      isConnected: jest.fn().mockReturnValue(true),
-      close: jest.fn().mockResolvedValue(undefined),
-    };
+        mockConnectionManager = {
+            close: jest.fn().mockResolvedValue(undefined),
+            createChannel: jest.fn().mockReturnValue(mockChannel),
+            isConnected: jest.fn().mockReturnValue(true),
+        };
 
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        {
-          provide: RabbitMQService,
-          useFactory: () => {
-            return new RabbitMQService(
-              mockConnectionManager as AmqpConnectionManager,
-              'test',
+        const module: TestingModule = await Test.createTestingModule({
+            providers: [
+                {
+                    provide: RabbitMQService,
+                    useFactory: () => new RabbitMQService(mockConnectionManager as AmqpConnectionManager, 'test'),
+                },
+            ],
+        }).compile();
+
+        service = module.get<RabbitMQService>(RabbitMQService);
+    });
+
+    it('should be defined', () => {
+        expect(service).toBeDefined();
+    });
+
+    describe('initialize', () => {
+        it('should initialize the channel', async () => {
+            await service.initialize();
+            expect(mockConnectionManager.createChannel).toHaveBeenCalled();
+            expect(mockChannel.waitForConnect).toHaveBeenCalled();
+        });
+    });
+
+    describe('publish', () => {
+        it('should publish a message to an exchange', async () => {
+            await service.initialize();
+            const result = await service.publish('test-exchange', 'test.key', { data: 'test' });
+
+            expect(result).toBe(true);
+            expect(mockChannel.publish).toHaveBeenCalledWith(
+                'test-exchange',
+                'test.key',
+                expect.any(Buffer),
+                expect.objectContaining({ persistent: true }),
             );
-          },
-        },
-      ],
-    }).compile();
+        });
 
-    service = module.get<RabbitMQService>(RabbitMQService);
-  });
+        it('should serialize object messages to JSON', async () => {
+            await service.initialize();
+            const message = { action: 'created', userId: 123 };
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
+            await service.publish('events', 'user.created', message);
 
-  describe('initialize', () => {
-    it('should initialize the channel', async () => {
-      await service.initialize();
-      expect(mockConnectionManager.createChannel).toHaveBeenCalled();
-      expect(mockChannel.waitForConnect).toHaveBeenCalled();
-    });
-  });
-
-  describe('publish', () => {
-    it('should publish a message to an exchange', async () => {
-      await service.initialize();
-      const result = await service.publish('test-exchange', 'test.key', { data: 'test' });
-      
-      expect(result).toBe(true);
-      expect(mockChannel.publish).toHaveBeenCalledWith(
-        'test-exchange',
-        'test.key',
-        expect.any(Buffer),
-        expect.objectContaining({ persistent: true }),
-      );
+            expect(mockChannel.publish).toHaveBeenCalledWith(
+                'events',
+                'user.created',
+                Buffer.from(JSON.stringify(message)),
+                expect.any(Object),
+            );
+        });
     });
 
-    it('should serialize object messages to JSON', async () => {
-      await service.initialize();
-      const message = { userId: 123, action: 'created' };
-      await service.publish('events', 'user.created', message);
-      
-      expect(mockChannel.publish).toHaveBeenCalledWith(
-        'events',
-        'user.created',
-        Buffer.from(JSON.stringify(message)),
-        expect.any(Object),
-      );
-    });
-  });
+    describe('sendToQueue', () => {
+        it('should send a message directly to a queue', async () => {
+            await service.initialize();
+            const result = await service.sendToQueue('test-queue', { data: 'test' });
 
-  describe('sendToQueue', () => {
-    it('should send a message directly to a queue', async () => {
-      await service.initialize();
-      const result = await service.sendToQueue('test-queue', { data: 'test' });
-      
-      expect(result).toBe(true);
-      expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
-        'test-queue',
-        expect.any(Buffer),
-        expect.objectContaining({ persistent: true }),
-      );
-    });
-  });
-
-  describe('assertExchange', () => {
-    it('should assert an exchange', async () => {
-      await service.initialize();
-      await service.assertExchange('test-exchange', 'topic');
-      
-      expect(mockChannel.assertExchange).toHaveBeenCalledWith(
-        'test-exchange',
-        'topic',
-        expect.objectContaining({ durable: true }),
-      );
-    });
-  });
-
-  describe('assertQueue', () => {
-    it('should assert a queue', async () => {
-      await service.initialize();
-      await service.assertQueue('test-queue');
-      
-      expect(mockChannel.assertQueue).toHaveBeenCalledWith(
-        'test-queue',
-        expect.objectContaining({ durable: true }),
-      );
-    });
-  });
-
-  describe('bindQueue', () => {
-    it('should bind a queue to an exchange', async () => {
-      await service.initialize();
-      await service.bindQueue('test-queue', 'test-exchange', 'test.key');
-      
-      expect(mockChannel.bindQueue).toHaveBeenCalledWith(
-        'test-queue',
-        'test-exchange',
-        'test.key',
-      );
-    });
-  });
-
-  describe('isConnected', () => {
-    it('should return connection status', () => {
-      const isConnected = service.isConnected();
-      expect(isConnected).toBe(true);
-      expect(mockConnectionManager.isConnected).toHaveBeenCalled();
-    });
-  });
-
-  describe('close', () => {
-    it('should close the channel and connection', async () => {
-      await service.initialize();
-      await service.close();
-      
-      expect(mockChannel.close).toHaveBeenCalled();
-      expect(mockConnectionManager.close).toHaveBeenCalled();
-    });
-  });
-
-  describe('error handling', () => {
-    it('should handle publish errors', async () => {
-      await service.initialize();
-      mockChannel.publish.mockRejectedValue(new Error('Publish failed'));
-
-      await expect(
-        service.publish('test-exchange', 'test.key', { data: 'test' })
-      ).rejects.toThrow('Publish failed');
+            expect(result).toBe(true);
+            expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
+                'test-queue',
+                expect.any(Buffer),
+                expect.objectContaining({ persistent: true }),
+            );
+        });
     });
 
-    it('should handle sendToQueue errors', async () => {
-      await service.initialize();
-      mockChannel.sendToQueue.mockRejectedValue(new Error('Send failed'));
+    describe('assertExchange', () => {
+        it('should assert an exchange', async () => {
+            await service.initialize();
+            await service.assertExchange('test-exchange', 'topic');
 
-      await expect(
-        service.sendToQueue('test-queue', { data: 'test' })
-      ).rejects.toThrow('Send failed');
-    });
-  });
-
-  describe('consume', () => {
-    it('should consume messages from a queue', async () => {
-      await service.initialize();
-      const onMessage = jest.fn();
-
-      await service.consume('test-queue', onMessage);
-
-      expect(mockChannel.consume).toHaveBeenCalledWith(
-        'test-queue',
-        expect.any(Function),
-        expect.objectContaining({ noAck: false }),
-      );
+            expect(mockChannel.assertExchange).toHaveBeenCalledWith(
+                'test-exchange',
+                'topic',
+                expect.objectContaining({ durable: true }),
+            );
+        });
     });
 
-    it('should process and ack messages', async () => {
-      await service.initialize();
-      const onMessage = jest.fn().mockResolvedValue(undefined);
-      let messageHandler: any;
+    describe('assertQueue', () => {
+        it('should assert a queue', async () => {
+            await service.initialize();
+            await service.assertQueue('test-queue');
 
-      mockChannel.consume.mockImplementation((queue: string, handler: any) => {
-        messageHandler = handler;
-        return Promise.resolve({ consumerTag: 'test' });
-      });
-
-      await service.consume('test-queue', onMessage);
-
-      const mockMessage = {
-        content: Buffer.from(JSON.stringify({ data: 'test' })),
-        fields: {},
-        properties: {},
-      };
-
-      await messageHandler(mockMessage);
-
-      expect(onMessage).toHaveBeenCalledWith({ data: 'test' });
-      expect(mockChannel.ack).toHaveBeenCalledWith(mockMessage);
+            expect(mockChannel.assertQueue).toHaveBeenCalledWith(
+                'test-queue',
+                expect.objectContaining({ durable: true }),
+            );
+        });
     });
 
-    it('should nack messages on error', async () => {
-      await service.initialize();
-      const onMessage = jest.fn().mockRejectedValue(new Error('Processing failed'));
-      let messageHandler: any;
+    describe('bindQueue', () => {
+        it('should bind a queue to an exchange', async () => {
+            await service.initialize();
+            await service.bindQueue('test-queue', 'test-exchange', 'test.key');
 
-      mockChannel.consume.mockImplementation((queue: string, handler: any) => {
-        messageHandler = handler;
-        return Promise.resolve({ consumerTag: 'test' });
-      });
-
-      await service.consume('test-queue', onMessage);
-
-      const mockMessage = {
-        content: Buffer.from(JSON.stringify({ data: 'test' })),
-        fields: {},
-        properties: {},
-      };
-
-      await messageHandler(mockMessage);
-
-      expect(mockChannel.nack).toHaveBeenCalledWith(mockMessage, false, false);
+            expect(mockChannel.bindQueue).toHaveBeenCalledWith('test-queue', 'test-exchange', 'test.key');
+        });
     });
 
-    it('should handle null messages', async () => {
-      await service.initialize();
-      const onMessage = jest.fn();
-      let messageHandler: any;
+    describe('isConnected', () => {
+        it('should return connection status', () => {
+            const isConnected = service.isConnected();
 
-      mockChannel.consume.mockImplementation((queue: string, handler: any) => {
-        messageHandler = handler;
-        return Promise.resolve({ consumerTag: 'test' });
-      });
-
-      await service.consume('test-queue', onMessage);
-      await messageHandler(null);
-
-      expect(onMessage).not.toHaveBeenCalled();
+            expect(isConnected).toBe(true);
+            expect(mockConnectionManager.isConnected).toHaveBeenCalled();
+        });
     });
 
-    it('should deserialize non-JSON messages as strings', async () => {
-      await service.initialize();
-      const onMessage = jest.fn().mockResolvedValue(undefined);
-      let messageHandler: any;
+    describe('close', () => {
+        it('should close the channel and connection', async () => {
+            await service.initialize();
+            await service.close();
 
-      mockChannel.consume.mockImplementation((queue: string, handler: any) => {
-        messageHandler = handler;
-        return Promise.resolve({ consumerTag: 'test' });
-      });
-
-      await service.consume('test-queue', onMessage);
-
-      const mockMessage = {
-        content: Buffer.from('plain text'),
-        fields: {},
-        properties: {},
-      };
-
-      await messageHandler(mockMessage);
-
-      expect(onMessage).toHaveBeenCalledWith('plain text');
-      expect(mockChannel.ack).toHaveBeenCalledWith(mockMessage);
-    });
-  });
-
-  describe('request (RPC)', () => {
-    beforeEach(() => {
-      mockChannel.consume.mockImplementation((queue: string, handler: any) => {
-        return Promise.resolve({ consumerTag: 'test' });
-      });
+            expect(mockChannel.close).toHaveBeenCalled();
+            expect(mockConnectionManager.close).toHaveBeenCalled();
+        });
     });
 
-    it('should make RPC request and receive response', async () => {
-      await service.initialize();
-      
-      let replyHandler: any;
-      mockChannel.consume.mockImplementation((queue: string, handler: any) => {
-        replyHandler = handler;
-        return Promise.resolve({ consumerTag: 'test' });
-      });
+    describe('error handling', () => {
+        it('should handle publish errors', async () => {
+            await service.initialize();
+            mockChannel.publish.mockRejectedValue(new Error('Publish failed'));
 
-      const requestPromise = service.request('rpc-queue', { action: 'test' });
+            await expect(service.publish('test-exchange', 'test.key', { data: 'test' })).rejects.toThrow(
+                'Publish failed',
+            );
+        });
 
-      // Wait for consume to be called
-      await new Promise(resolve => setTimeout(resolve, 10));
+        it('should handle sendToQueue errors', async () => {
+            await service.initialize();
+            mockChannel.sendToQueue.mockRejectedValue(new Error('Send failed'));
 
-      // Simulate reply
-      const replyMessage = {
-        content: Buffer.from(JSON.stringify({ result: 'success' })),
-        properties: {
-          correlationId: expect.any(String),
-        },
-      };
-
-      if (replyHandler) {
-        // Get the actual correlationId from the sendToQueue call
-        const sendCall = mockChannel.sendToQueue.mock.calls.find((call: any) => 
-          call[0] === 'rpc-queue'
-        );
-        if (sendCall && sendCall[2]?.correlationId) {
-          replyMessage.properties.correlationId = sendCall[2].correlationId;
-          await replyHandler(replyMessage);
-        }
-      }
-
-      const result = await requestPromise;
-      expect(result).toEqual({ result: 'success' });
+            await expect(service.sendToQueue('test-queue', { data: 'test' })).rejects.toThrow('Send failed');
+        });
     });
 
-    it('should timeout on RPC request', async () => {
-      await service.initialize();
+    describe('consume', () => {
+        it('should consume messages from a queue', async () => {
+            await service.initialize();
+            const onMessage = jest.fn();
 
-      // Use a very short timeout for testing
-      const requestPromise = service.request('rpc-queue', { action: 'test' }, { timeout: 10 });
+            await service.consume('test-queue', onMessage);
 
-      await expect(requestPromise).rejects.toThrow('RPC timeout after 10ms');
-    }, 1000);
+            expect(mockChannel.consume).toHaveBeenCalledWith(
+                'test-queue',
+                expect.any(Function),
+                expect.objectContaining({ noAck: false }),
+            );
+        });
 
-    it('should handle RPC request errors', async () => {
-      await service.initialize();
-      mockChannel.sendToQueue.mockRejectedValue(new Error('Send failed'));
+        it('should process and ack messages', async () => {
+            await service.initialize();
+            const onMessage = jest.fn().mockResolvedValue(undefined);
+            let messageHandler: any;
 
-      await expect(
-        service.request('rpc-queue', { action: 'test' })
-      ).rejects.toThrow('Send failed');
+            mockChannel.consume.mockImplementation((queue: string, handler: any) => {
+                messageHandler = handler;
+
+                return Promise.resolve({ consumerTag: 'test' });
+            });
+
+            await service.consume('test-queue', onMessage);
+
+            const mockMessage = {
+                content: Buffer.from(JSON.stringify({ data: 'test' })),
+                fields: {},
+                properties: {},
+            };
+
+            await messageHandler(mockMessage);
+
+            expect(onMessage).toHaveBeenCalledWith({ data: 'test' });
+            expect(mockChannel.ack).toHaveBeenCalledWith(mockMessage);
+        });
+
+        it('should nack messages on error', async () => {
+            await service.initialize();
+            const onMessage = jest.fn().mockRejectedValue(new Error('Processing failed'));
+            let messageHandler: any;
+
+            mockChannel.consume.mockImplementation((queue: string, handler: any) => {
+                messageHandler = handler;
+
+                return Promise.resolve({ consumerTag: 'test' });
+            });
+
+            await service.consume('test-queue', onMessage);
+
+            const mockMessage = {
+                content: Buffer.from(JSON.stringify({ data: 'test' })),
+                fields: {},
+                properties: {},
+            };
+
+            await messageHandler(mockMessage);
+
+            expect(mockChannel.nack).toHaveBeenCalledWith(mockMessage, false, false);
+        });
+
+        it('should handle null messages', async () => {
+            await service.initialize();
+            const onMessage = jest.fn();
+            let messageHandler: any;
+
+            mockChannel.consume.mockImplementation((queue: string, handler: any) => {
+                messageHandler = handler;
+
+                return Promise.resolve({ consumerTag: 'test' });
+            });
+
+            await service.consume('test-queue', onMessage);
+            await messageHandler(null);
+
+            expect(onMessage).not.toHaveBeenCalled();
+        });
+
+        it('should deserialize non-JSON messages as strings', async () => {
+            await service.initialize();
+            const onMessage = jest.fn().mockResolvedValue(undefined);
+            let messageHandler: any;
+
+            mockChannel.consume.mockImplementation((queue: string, handler: any) => {
+                messageHandler = handler;
+
+                return Promise.resolve({ consumerTag: 'test' });
+            });
+
+            await service.consume('test-queue', onMessage);
+
+            const mockMessage = {
+                content: Buffer.from('plain text'),
+                fields: {},
+                properties: {},
+            };
+
+            await messageHandler(mockMessage);
+
+            expect(onMessage).toHaveBeenCalledWith('plain text');
+            expect(mockChannel.ack).toHaveBeenCalledWith(mockMessage);
+        });
     });
 
-    it('should handle non-Error rejections in RPC', async () => {
-      await service.initialize();
-      mockChannel.sendToQueue.mockRejectedValue('string error');
+    describe('request (RPC)', () => {
+        beforeEach(() => {
+            mockChannel.consume.mockImplementation((queue: string, handler: any) =>
+                Promise.resolve({ consumerTag: 'test' }),
+            );
+        });
 
-      await expect(
-        service.request('rpc-queue', { action: 'test' })
-      ).rejects.toThrow('string error');
+        it('should make RPC request and receive response', async () => {
+            await service.initialize();
+
+            let replyHandler: any;
+
+            mockChannel.consume.mockImplementation((queue: string, handler: any) => {
+                replyHandler = handler;
+
+                return Promise.resolve({ consumerTag: 'test' });
+            });
+
+            const requestPromise = service.request('rpc-queue', { action: 'test' });
+
+            // Wait for consume to be called
+            await new Promise((resolve) => setTimeout(resolve, 10));
+
+            // Simulate reply
+            const replyMessage = {
+                content: Buffer.from(JSON.stringify({ result: 'success' })),
+                properties: {
+                    correlationId: expect.any(String),
+                },
+            };
+
+            if (replyHandler) {
+                // Get the actual correlationId from the sendToQueue call
+                const sendCall = mockChannel.sendToQueue.mock.calls.find((call: any) => call[0] === 'rpc-queue');
+
+                if (sendCall && sendCall[2]?.correlationId) {
+                    replyMessage.properties.correlationId = sendCall[2].correlationId;
+                    await replyHandler(replyMessage);
+                }
+            }
+
+            const result = await requestPromise;
+
+            expect(result).toEqual({ result: 'success' });
+        });
+
+        it('should timeout on RPC request', async () => {
+            await service.initialize();
+
+            // Use a very short timeout for testing
+            const requestPromise = service.request('rpc-queue', { action: 'test' }, { timeout: 10 });
+
+            await expect(requestPromise).rejects.toThrow('RPC timeout after 10ms');
+        }, 1000);
+
+        it('should handle RPC request errors', async () => {
+            await service.initialize();
+            mockChannel.sendToQueue.mockRejectedValue(new Error('Send failed'));
+
+            await expect(service.request('rpc-queue', { action: 'test' })).rejects.toThrow('Send failed');
+        });
+
+        it('should handle non-Error rejections in RPC', async () => {
+            await service.initialize();
+            mockChannel.sendToQueue.mockRejectedValue('string error');
+
+            await expect(service.request('rpc-queue', { action: 'test' })).rejects.toThrow('string error');
+        });
     });
-  });
 
-  describe('message serialization', () => {
-    it('should handle Buffer messages', async () => {
-      await service.initialize();
-      const buffer = Buffer.from('test data');
-      await service.sendToQueue('test-queue', buffer);
+    describe('message serialization', () => {
+        it('should handle Buffer messages', async () => {
+            await service.initialize();
+            const buffer = Buffer.from('test data');
 
-      expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
-        'test-queue',
-        buffer,
-        expect.any(Object),
-      );
+            await service.sendToQueue('test-queue', buffer);
+
+            expect(mockChannel.sendToQueue).toHaveBeenCalledWith('test-queue', buffer, expect.any(Object));
+        });
+
+        it('should handle string messages', async () => {
+            await service.initialize();
+            await service.sendToQueue('test-queue', 'test string');
+
+            expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
+                'test-queue',
+                Buffer.from('test string'),
+                expect.any(Object),
+            );
+        });
+
+        it('should handle object messages', async () => {
+            await service.initialize();
+            const obj = { key: 'value', nested: { data: 123 } };
+
+            await service.sendToQueue('test-queue', obj);
+
+            expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
+                'test-queue',
+                Buffer.from(JSON.stringify(obj)),
+                expect.any(Object),
+            );
+        });
     });
 
-    it('should handle string messages', async () => {
-      await service.initialize();
-      await service.sendToQueue('test-queue', 'test string');
+    describe('channel setup', () => {
+        it('should configure channel with prefetch during initialization', async () => {
+            const mockConfirmChannel = {
+                prefetch: jest.fn().mockResolvedValue(undefined),
+            };
 
-      expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
-        'test-queue',
-        Buffer.from('test string'),
-        expect.any(Object),
-      );
+            let setupCallback: any;
+
+            mockConnectionManager.createChannel = jest.fn().mockImplementation((options: any) => {
+                setupCallback = options.setup;
+
+                return mockChannel;
+            });
+
+            await service.initialize();
+
+            expect(mockConnectionManager.createChannel).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    json: false,
+                    setup: expect.any(Function),
+                }),
+            );
+
+            // Execute setup callback
+            if (setupCallback) {
+                await setupCallback(mockConfirmChannel);
+                expect(mockConfirmChannel.prefetch).toHaveBeenCalledWith(1);
+            }
+        });
     });
-
-    it('should handle object messages', async () => {
-      await service.initialize();
-      const obj = { key: 'value', nested: { data: 123 } };
-      await service.sendToQueue('test-queue', obj);
-
-      expect(mockChannel.sendToQueue).toHaveBeenCalledWith(
-        'test-queue',
-        Buffer.from(JSON.stringify(obj)),
-        expect.any(Object),
-      );
-    });
-  });
-
-  describe('channel setup', () => {
-    it('should configure channel with prefetch during initialization', async () => {
-      const mockConfirmChannel = {
-        prefetch: jest.fn().mockResolvedValue(undefined),
-      };
-
-      let setupCallback: any;
-      mockConnectionManager.createChannel = jest.fn().mockImplementation((options: any) => {
-        setupCallback = options.setup;
-        return mockChannel;
-      });
-
-      await service.initialize();
-
-      expect(mockConnectionManager.createChannel).toHaveBeenCalledWith(
-        expect.objectContaining({
-          json: false,
-          setup: expect.any(Function),
-        }),
-      );
-
-      // Execute setup callback
-      if (setupCallback) {
-        await setupCallback(mockConfirmChannel);
-        expect(mockConfirmChannel.prefetch).toHaveBeenCalledWith(1);
-      }
-    });
-  });
 });
-

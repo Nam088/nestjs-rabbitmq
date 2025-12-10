@@ -6,61 +6,130 @@ import { AmqpConnectionManager, ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel, Message, Options } from 'amqplib';
 
 import { PublishOptions, RpcOptions } from '../interfaces/rabbitmq-options.interface';
+import { getErrorStack, LogLevel, shouldLog } from '../utils/log-utils';
 
 /**
- * RabbitMQ Service for publishing and consuming messages
+ * Core RabbitMQ service for publishing and consuming messages.
+ * Provides a high-level API for interacting with RabbitMQ, including:
+ * - Publishing messages to exchanges
+ * - Sending messages directly to queues
+ * - Consuming messages from queues
+ * - RPC (request-reply) pattern support
+ * - Exchange and queue management
+ *
+ * @example
+ * ```typescript
+ * @Injectable()
+ * class NotificationService {
+ *   constructor(
+ *     @InjectRabbitMQ() private readonly rabbitMQ: RabbitMQService,
+ *   ) {}
+ *
+ *   async sendNotification(userId: string, message: string): Promise<void> {
+ *     await this.rabbitMQ.publish('notifications', 'user.notify', {
+ *       userId,
+ *       message,
+ *       timestamp: new Date(),
+ *     });
+ *   }
+ * }
+ * ```
  */
 @Injectable()
 export class RabbitMQService implements OnModuleDestroy {
     private channel: ChannelWrapper;
     private readonly logger = new Logger(RabbitMQService.name);
-    private readonly logLevel: 'debug' | 'error' | 'log' | 'none' | 'warn';
-    private readonly rpcQueues = new Map<string, any>();
+    private readonly logLevel: LogLevel;
+    private replyQueueInitialized = false;
+    private readonly rpcQueues = new Map<string, Map<string, (response: unknown) => void>>();
 
+    /**
+     * Creates an instance of RabbitMQService.
+     *
+     * @param {AmqpConnectionManager} connectionManager - The AMQP connection manager instance
+     * @param {string} connectionName - The name of this connection (for multi-connection support)
+     * @param {LogLevel} [logLevel='error'] - The minimum log level to output
+     */
     constructor(
         private readonly connectionManager: AmqpConnectionManager,
         private readonly connectionName: string,
-        logLevel: 'debug' | 'error' | 'log' | 'none' | 'warn' = 'error',
+        logLevel: LogLevel = 'error',
     ) {
         this.logLevel = logLevel;
     }
 
     /**
-     * Module destroy lifecycle hook
+     * NestJS lifecycle hook called when the module is being destroyed.
+     * Cleans up RPC callback queues and closes the connection.
+     *
+     * @returns {Promise<void>}
      */
     async onModuleDestroy(): Promise<void> {
+        this.rpcQueues.clear();
         await this.close();
     }
 
     /**
-     * Get the underlying channel
+     * Gets the underlying AMQP channel wrapper.
+     * Use this for advanced operations not covered by the service API.
+     *
+     * @returns {ChannelWrapper} The channel wrapper instance
+     *
+     * @example
+     * ```typescript
+     * const channel = rabbitMQ.getChannel();
+     * await channel.prefetch(10);
+     * ```
      */
     getChannel(): ChannelWrapper {
         return this.channel;
     }
 
     /**
-     * Get the connection manager
+     * Gets the AMQP connection manager.
+     * Use this for connection-level operations.
+     *
+     * @returns {AmqpConnectionManager} The connection manager instance
+     *
+     * @example
+     * ```typescript
+     * const manager = rabbitMQ.getConnectionManager();
+     * console.log('Connected:', manager.isConnected());
+     * ```
      */
     getConnectionManager(): AmqpConnectionManager {
         return this.connectionManager;
     }
 
     /**
-     * Get or create a reply queue for RPC
+     * Gets or creates the reply queue for RPC operations.
+     * Uses RabbitMQ's built-in direct reply-to feature.
+     *
+     * @private
+     * @returns {Promise<string>} The reply queue name
      */
     private async getReplyQueue(): Promise<string> {
         const replyQueue = 'amq.rabbitmq.reply-to';
 
-        // setup direct-reply-to consumer
+        // Only setup consumer once to prevent multiple consumers on the same queue
+        if (this.replyQueueInitialized) {
+            return replyQueue;
+        }
 
+        this.replyQueueInitialized = true;
+
+        // Initialize callback map for this reply queue
+        if (!this.rpcQueues.has(replyQueue)) {
+            this.rpcQueues.set(replyQueue, new Map());
+        }
+
+        // Setup direct-reply-to consumer
         await this.channel.consume(
             replyQueue,
             (message: Message | null) => {
                 if (!message) return;
 
                 const { correlationId } = message.properties;
-                // reply received
 
                 const callbacks = this.rpcQueues.get(replyQueue);
 
@@ -71,27 +140,45 @@ export class RabbitMQService implements OnModuleDestroy {
                 const callback = callbacks.get(correlationId);
                 const response = this.deserializeMessage(message.content);
 
-                callback(response);
+                if (callback) {
+                    callback(response);
+                }
+
                 callbacks.delete(correlationId);
-                // callback completed
             },
             // Direct-reply-to requires noAck=true
             { noAck: true },
         );
 
-        // reply queue ready
-
         return replyQueue;
     }
 
     /**
-     * Publish a message to an exchange
-     * @param exchange - Exchange name
-     * @param routingKey - Routing key
-     * @param message - Message to publish
-     * @param options - Publish options
+     * Publishes a message to an exchange with a routing key.
+     *
+     * @param {string} exchange - The exchange name to publish to
+     * @param {string} routingKey - The routing key for message routing
+     * @param {unknown} message - The message payload (will be JSON serialized)
+     * @param {PublishOptions} [options] - Additional publish options
+     * @returns {Promise<boolean>} True if the message was published successfully
+     * @throws {Error} If publishing fails
+     *
+     * @example
+     * ```typescript
+     * // Simple publish
+     * await rabbitMQ.publish('events', 'user.created', { userId: '123' });
+     *
+     * // With options
+     * await rabbitMQ.publish('events', 'user.created', payload, {
+     *   persistent: true,
+     *   priority: 5,
+     *   expiration: '60000',
+     * });
+     * ```
      */
-    async publish(exchange: string, routingKey: string, message: any, options?: PublishOptions): Promise<boolean> {
+    async publish(exchange: string, routingKey: string, message: unknown, options?: PublishOptions): Promise<boolean> {
+        this.debug(`Publishing message to ${exchange}/${routingKey}`);
+
         try {
             const content = this.serializeMessage(message);
             const publishOptions: Options.Publish = {
@@ -101,32 +188,42 @@ export class RabbitMQService implements OnModuleDestroy {
 
             await this.channel.publish(exchange, routingKey, content, publishOptions);
 
-            // published
+            this.debug(`Successfully published message to ${exchange}/${routingKey}`);
 
             return true;
-        } catch (error) {
-            this.logger.error(`Failed to publish message to ${exchange}/${routingKey}`, error.stack);
+        } catch (error: unknown) {
+            this.logger.error(`Failed to publish message to ${exchange}/${routingKey}`, getErrorStack(error));
             throw error;
         }
     }
 
     /**
-     * Deserialize a message from Buffer
+     * Deserializes a message buffer to its original form.
+     * Attempts JSON parsing, falls back to string if parsing fails.
+     *
+     * @private
+     * @param {Buffer} buffer - The message content buffer
+     * @returns {unknown} The deserialized message
      */
-    private deserializeMessage(buffer: Buffer): any {
+    private deserializeMessage(buffer: Buffer): unknown {
         try {
             const str = buffer.toString();
 
-            return JSON.parse(str);
+            return JSON.parse(str) as unknown;
         } catch {
             return buffer.toString();
         }
     }
 
     /**
-     * Serialize a message to Buffer
+     * Serializes a message to a Buffer for transmission.
+     * Handles Buffer, string, and JSON-serializable objects.
+     *
+     * @private
+     * @param {unknown} message - The message to serialize
+     * @returns {Buffer} The serialized message as a Buffer
      */
-    private serializeMessage(message: any): Buffer {
+    private serializeMessage(message: unknown): Buffer {
         if (Buffer.isBuffer(message)) {
             return message;
         }
@@ -139,10 +236,18 @@ export class RabbitMQService implements OnModuleDestroy {
     }
 
     /**
-     * Assert an exchange
-     * @param exchange - Exchange name
-     * @param type - Exchange type
-     * @param options - Exchange options
+     * Asserts (creates if not exists) an exchange.
+     *
+     * @param {string} exchange - The exchange name
+     * @param {'direct' | 'fanout' | 'headers' | 'topic'} type - The exchange type
+     * @param {Options.AssertExchange} [options] - Exchange options (durable defaults to true)
+     * @returns {Promise<void>}
+     *
+     * @example
+     * ```typescript
+     * await rabbitMQ.assertExchange('events', 'topic', { durable: true });
+     * await rabbitMQ.assertExchange('notifications', 'fanout');
+     * ```
      */
     async assertExchange(
         exchange: string,
@@ -153,35 +258,51 @@ export class RabbitMQService implements OnModuleDestroy {
             durable: true,
             ...options,
         });
-        // asserted
     }
 
     /**
-     * Assert a queue
-     * @param queue - Queue name
-     * @param options - Queue options
+     * Asserts (creates if not exists) a queue.
+     *
+     * @param {string} queue - The queue name
+     * @param {Options.AssertQueue} [options] - Queue options (durable defaults to true)
+     * @returns {Promise<void>}
+     *
+     * @example
+     * ```typescript
+     * await rabbitMQ.assertQueue('orders', { durable: true });
+     * await rabbitMQ.assertQueue('temp-queue', { exclusive: true, autoDelete: true });
+     * ```
      */
     async assertQueue(queue: string, options?: Options.AssertQueue): Promise<void> {
         await this.channel.assertQueue(queue, {
             durable: true,
             ...options,
         });
-        // asserted
     }
 
     /**
-     * Bind a queue to an exchange
-     * @param queue - Queue name
-     * @param exchange - Exchange name
-     * @param routingKey - Routing key
+     * Binds a queue to an exchange with a routing key.
+     *
+     * @param {string} queue - The queue name to bind
+     * @param {string} exchange - The exchange name to bind to
+     * @param {string} routingKey - The routing key pattern
+     * @returns {Promise<void>}
+     *
+     * @example
+     * ```typescript
+     * await rabbitMQ.bindQueue('user-events', 'events', 'user.*');
+     * await rabbitMQ.bindQueue('all-logs', 'logs', '#');
+     * ```
      */
     async bindQueue(queue: string, exchange: string, routingKey: string): Promise<void> {
         await this.channel.bindQueue(queue, exchange, routingKey);
-        // bound
     }
 
     /**
-     * Close the connection
+     * Closes the RabbitMQ connection and channel.
+     * Called automatically on module destroy.
+     *
+     * @returns {Promise<void>}
      */
     async close(): Promise<void> {
         this.info(`Closing RabbitMQ connection: ${this.connectionName}`);
@@ -190,14 +311,29 @@ export class RabbitMQService implements OnModuleDestroy {
     }
 
     /**
-     * Consume messages from a queue
-     * @param queue - Queue name
-     * @param onMessage - Message handler
-     * @param options - Consume options
+     * Starts consuming messages from a queue.
+     * Messages are automatically acknowledged on successful processing,
+     * or rejected (not requeued) on error.
+     *
+     * @param {string} queue - The queue name to consume from
+     * @param {(msg: unknown) => Promise<void> | void} onMessage - The message handler callback
+     * @param {Options.Consume} [options] - Consume options (noAck defaults to false)
+     * @returns {Promise<void>}
+     *
+     * @example
+     * ```typescript
+     * await rabbitMQ.consume('orders', async (message) => {
+     *   const order = message as Order;
+     *   await this.processOrder(order);
+     * });
+     *
+     * // With options
+     * await rabbitMQ.consume('priority-orders', handler, { priority: 10 });
+     * ```
      */
     async consume(
         queue: string,
-        onMessage: (msg: any) => Promise<void> | void,
+        onMessage: (msg: unknown) => Promise<void> | void,
         options?: Options.Consume,
     ): Promise<void> {
         await this.channel.consume(
@@ -213,8 +349,8 @@ export class RabbitMQService implements OnModuleDestroy {
 
                     await onMessage(content);
                     this.channel.ack(message);
-                } catch (error) {
-                    this.logger.error(`Error processing message from ${queue}`, error.stack);
+                } catch (error: unknown) {
+                    this.logger.error(`Error processing message from ${queue}`, getErrorStack(error));
                     this.channel.nack(message, false, false); // Don't requeue
                 }
             },
@@ -228,7 +364,10 @@ export class RabbitMQService implements OnModuleDestroy {
     }
 
     /**
-     * Initialize the channel
+     * Initializes the RabbitMQ channel.
+     * Must be called before using any other methods.
+     *
+     * @returns {Promise<void>}
      */
     async initialize(): Promise<void> {
         this.info(`Initializing RabbitMQ channel for connection: ${this.connectionName}`);
@@ -246,31 +385,59 @@ export class RabbitMQService implements OnModuleDestroy {
     }
 
     /**
-     * Check if the connection is connected
+     * Checks if the connection is currently connected.
+     *
+     * @returns {boolean} True if connected, false otherwise
+     *
+     * @example
+     * ```typescript
+     * if (!rabbitMQ.isConnected()) {
+     *   console.warn('RabbitMQ is not connected!');
+     * }
+     * ```
      */
     isConnected(): boolean {
         return this.connectionManager.isConnected();
     }
 
     /**
-     * RPC request-reply pattern
-     * @param queue - Queue name
-     * @param message - Message to send
-     * @param options - RPC options
+     * Performs an RPC (Remote Procedure Call) request.
+     * Sends a message to a queue and waits for a response.
+     *
+     * @template T - The expected response type
+     * @param {string} queue - The queue name to send the request to
+     * @param {unknown} message - The request message payload
+     * @param {RpcOptions} [options={}] - RPC options including timeout and publish options
+     * @returns {Promise<T>} The response from the RPC handler
+     * @throws {Error} If the request times out or sending fails
+     *
+     * @example
+     * ```typescript
+     * interface CalculateRequest {
+     *   a: number;
+     *   b: number;
+     * }
+     *
+     * interface CalculateResponse {
+     *   result: number;
+     * }
+     *
+     * const response = await rabbitMQ.request<CalculateResponse>(
+     *   'calculator-rpc',
+     *   { a: 5, b: 3 } as CalculateRequest,
+     *   { timeout: 5000 }
+     * );
+     *
+     * console.log('Result:', response.result); // 8
+     * ```
      */
-    async request<T = any>(queue: string, message: any, options: RpcOptions = {}): Promise<T> {
+    async request<T = unknown>(queue: string, message: unknown, options: RpcOptions = {}): Promise<T> {
         const { publishOptions = {}, timeout = 30000 } = options;
         const correlationId = randomUUID();
 
-        // start request
-
         const replyQueue = await this.getReplyQueue();
 
-        // reply queue ready
-
-        return new Promise<T>(async (resolve, reject) => {
-            // request initialized
-
+        return new Promise<T>((resolve, reject) => {
             const timeoutId = setTimeout(() => {
                 const callbacks = this.rpcQueues.get(replyQueue);
 
@@ -282,45 +449,59 @@ export class RabbitMQService implements OnModuleDestroy {
             // Store callback
             if (!this.rpcQueues.has(replyQueue)) {
                 this.rpcQueues.set(replyQueue, new Map());
-                // created map
             }
 
             const callbackMap = this.rpcQueues.get(replyQueue)!;
 
-            callbackMap.set(correlationId, (response: any) => {
+            callbackMap.set(correlationId, (response: unknown) => {
                 clearTimeout(timeoutId);
-                // callback invoked
-                resolve(response);
+                resolve(response as T);
             });
 
-            // stored
-
             // Send request
-            try {
-                await this.sendToQueue(queue, message, {
-                    ...publishOptions,
-                    replyTo: replyQueue,
-                    correlationId,
+            this.sendToQueue(queue, message, {
+                ...publishOptions,
+                replyTo: replyQueue,
+                correlationId,
+            })
+                .then(() => {
+                    // Request sent successfully
+                })
+                .catch((error: unknown) => {
+                    clearTimeout(timeoutId);
+                    callbackMap.delete(correlationId);
+                    this.logger.error(
+                        `[RPC] Send failed: correlationId=${correlationId}, queue=${queue}, error=${String((error as Error)?.message ?? error)}`,
+                        (error as Error)?.stack,
+                    );
+                    reject(error instanceof Error ? error : new Error(String(error)));
                 });
-            } catch (error) {
-                clearTimeout(timeoutId);
-                callbackMap.delete(correlationId);
-                this.logger.error(
-                    `[RPC] Send failed: correlationId=${correlationId}, queue=${queue}, error=${String((error as Error)?.message ?? error)}`,
-                    (error as Error)?.stack,
-                );
-                reject(error instanceof Error ? error : new Error(String(error)));
-            }
         });
     }
 
     /**
-     * Send a message directly to a queue
-     * @param queue - Queue name
-     * @param message - Message to send
-     * @param options - Send options
+     * Sends a message directly to a queue (bypassing exchanges).
+     *
+     * @param {string} queue - The queue name to send to
+     * @param {unknown} message - The message payload (will be JSON serialized)
+     * @param {Options.Publish} [options] - Send options
+     * @returns {Promise<boolean>} True if the message was sent successfully
+     * @throws {Error} If sending fails
+     *
+     * @example
+     * ```typescript
+     * await rabbitMQ.sendToQueue('tasks', { taskId: '123', action: 'process' });
+     *
+     * // With options
+     * await rabbitMQ.sendToQueue('priority-tasks', payload, {
+     *   priority: 10,
+     *   expiration: '300000',
+     * });
+     * ```
      */
-    async sendToQueue(queue: string, message: any, options?: Options.Publish): Promise<boolean> {
+    async sendToQueue(queue: string, message: unknown, options?: Options.Publish): Promise<boolean> {
+        this.debug(`Sending message to queue ${queue}`);
+
         try {
             const content = this.serializeMessage(message);
             const sendOptions: Options.Publish = {
@@ -330,36 +511,36 @@ export class RabbitMQService implements OnModuleDestroy {
 
             await this.channel.sendToQueue(queue, content, sendOptions);
 
-            // sent
+            this.debug(`Successfully sent message to queue ${queue}`);
 
             return true;
-        } catch (error) {
-            this.logger.error(`Failed to send message to queue ${queue}`, error.stack);
+        } catch (error: unknown) {
+            this.logger.error(`Failed to send message to queue ${queue}`, getErrorStack(error));
             throw error;
         }
     }
 
+    /**
+     * Logs a debug message if debug level is enabled.
+     * @private
+     */
     private debug(message: string): void {
-        if (this.shouldLog('debug')) this.logger.debug(message);
+        if (shouldLog('debug', this.logLevel)) this.logger.debug(message);
     }
 
+    /**
+     * Logs an info message if log level is enabled.
+     * @private
+     */
     private info(message: string): void {
-        if (this.shouldLog('log')) this.logger.log(message);
+        if (shouldLog('log', this.logLevel)) this.logger.log(message);
     }
 
-    private shouldLog(level: 'debug' | 'error' | 'log' | 'warn'): boolean {
-        const order: Record<'debug' | 'error' | 'log' | 'none' | 'warn', number> = {
-            debug: 3,
-            error: 0,
-            log: 2,
-            none: -1,
-            warn: 1,
-        };
-
-        return order[level] <= order[this.logLevel];
-    }
-
+    /**
+     * Logs a warning message if warn level is enabled.
+     * @private
+     */
     private warn(message: string): void {
-        if (this.shouldLog('warn')) this.logger.warn(message);
+        if (shouldLog('warn', this.logLevel)) this.logger.warn(message);
     }
 }

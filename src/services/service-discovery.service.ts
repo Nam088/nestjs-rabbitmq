@@ -10,11 +10,35 @@ import {
     ServiceFilterOptions,
     ServiceInfo,
 } from '../interfaces/service-discovery.interface';
+import { LogLevel, shouldLog } from '../utils/log-utils';
 
 import { RabbitMQService } from './rabbitmq.service';
 
 /**
- * Service Discovery Service using RabbitMQ
+ * Service Discovery Service using RabbitMQ.
+ * Provides a decentralized service registry where services can:
+ * - Register themselves on startup
+ * - Send periodic heartbeats to indicate health
+ * - Discover other registered services
+ * - Detect and remove dead services
+ *
+ * @example
+ * ```typescript
+ * @Injectable()
+ * class ApiGateway {
+ *   constructor(
+ *     @InjectServiceDiscovery() private readonly discovery: ServiceDiscoveryService,
+ *   ) {}
+ *
+ *   async getBackendUrl(): Promise<string> {
+ *     const service = this.discovery.getRandomHealthyService('backend-api');
+ *     if (!service) {
+ *       throw new Error('No healthy backend available');
+ *     }
+ *     return `http://${service.host}:${service.port}`;
+ *   }
+ * }
+ * ```
  */
 @Injectable()
 export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
@@ -22,19 +46,31 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     private heartbeatInterval?: NodeJS.Timeout;
     private isRegistered = false;
     private readonly logger = new Logger(ServiceDiscoveryService.name);
-    private readonly logLevel: 'debug' | 'error' | 'log' | 'none' | 'warn';
+    private readonly logLevel: LogLevel;
     private readonly services = new Map<string, ServiceInfo>();
     private serviceId: string;
 
+    /**
+     * Creates an instance of ServiceDiscoveryService.
+     *
+     * @param {RabbitMQService} rabbitMQService - The RabbitMQ service for messaging
+     * @param {ServiceDiscoveryOptions} options - Configuration options for service discovery
+     */
     constructor(
         private readonly rabbitMQService: RabbitMQService,
         private readonly options: ServiceDiscoveryOptions,
     ) {
         this.serviceId = randomUUID();
-        this.logLevel = (options.logLevel as any) ?? 'error';
+        this.logLevel = options.logLevel ?? 'error';
     }
 
-    async onModuleDestroy() {
+    /**
+     * NestJS lifecycle hook called when the module is being destroyed.
+     * Deregisters the service and stops heartbeat/cleanup intervals.
+     *
+     * @returns {Promise<void>}
+     */
+    async onModuleDestroy(): Promise<void> {
         if (!this.options.enabled || !this.isRegistered) {
             return;
         }
@@ -48,7 +84,13 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         }
     }
 
-    async onModuleInit() {
+    /**
+     * NestJS lifecycle hook called when the module is initialized.
+     * Sets up the discovery exchange, registers the service, and starts heartbeat.
+     *
+     * @returns {Promise<void>}
+     */
+    async onModuleInit(): Promise<void> {
         if (!this.options.enabled) {
             return;
         }
@@ -64,14 +106,25 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Get all registered services
+     * Gets all registered services in the registry.
+     *
+     * @returns {ServiceInfo[]} Array of all registered services
+     *
+     * @example
+     * ```typescript
+     * const allServices = discovery.getAllServices();
+     * console.log(`Total services: ${allServices.length}`);
+     * ```
      */
     getAllServices(): ServiceInfo[] {
         return Array.from(this.services.values());
     }
 
     /**
-     * Get current service info
+     * Gets the current service's information.
+     *
+     * @private
+     * @returns {ServiceInfo} The current service info
      */
     private getCurrentServiceInfo(): ServiceInfo {
         return {
@@ -90,14 +143,29 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Get exchange name
+     * Gets the exchange name for service discovery events.
+     *
+     * @private
+     * @returns {string} The exchange name
      */
     private getExchangeName(): string {
         return this.options.discoveryExchange || 'service.discovery';
     }
 
     /**
-     * Get healthy services
+     * Gets all healthy services, optionally filtered by service name.
+     *
+     * @param {string} [serviceName] - Optional service name to filter by
+     * @returns {ServiceInfo[]} Array of healthy services
+     *
+     * @example
+     * ```typescript
+     * // Get all healthy services
+     * const healthy = discovery.getHealthyServices();
+     *
+     * // Get healthy instances of a specific service
+     * const backends = discovery.getHealthyServices('backend-api');
+     * ```
      */
     getHealthyServices(serviceName?: string): ServiceInfo[] {
         return this.getServices({
@@ -107,7 +175,19 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Get a random healthy service instance (for load balancing)
+     * Gets a random healthy service instance (for client-side load balancing).
+     *
+     * @param {string} serviceName - The name of the service to find
+     * @returns {ServiceInfo | undefined} A random healthy service instance, or undefined if none available
+     *
+     * @example
+     * ```typescript
+     * const backend = discovery.getRandomHealthyService('backend-api');
+     * if (backend) {
+     *   const url = `http://${backend.host}:${backend.port}/api`;
+     *   // Make request to url
+     * }
+     * ```
      */
     getRandomHealthyService(serviceName: string): ServiceInfo | undefined {
         const services = this.getHealthyServices(serviceName);
@@ -120,7 +200,11 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Get routing key based on event type
+     * Gets the routing key for a specific event type.
+     *
+     * @private
+     * @param {ServiceDiscoveryEventType} type - The event type
+     * @returns {string} The routing key
      */
     private getRoutingKey(type: ServiceDiscoveryEventType): string {
         switch (type) {
@@ -139,14 +223,34 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Get service by ID
+     * Gets a service by its unique ID.
+     *
+     * @param {string} serviceId - The service ID to look up
+     * @returns {ServiceInfo | undefined} The service info, or undefined if not found
+     *
+     * @example
+     * ```typescript
+     * const service = discovery.getServiceById('abc-123-def');
+     * if (service) {
+     *   console.log(`Found: ${service.serviceName}`);
+     * }
+     * ```
      */
     getServiceById(serviceId: string): ServiceInfo | undefined {
         return this.services.get(serviceId);
     }
 
     /**
-     * Get service count
+     * Gets the count of registered services, optionally filtered by name.
+     *
+     * @param {string} [serviceName] - Optional service name to count
+     * @returns {number} The number of matching services
+     *
+     * @example
+     * ```typescript
+     * const totalCount = discovery.getServiceCount();
+     * const backendCount = discovery.getServiceCount('backend-api');
+     * ```
      */
     getServiceCount(serviceName?: string): number {
         if (serviceName) {
@@ -157,7 +261,22 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Get services by filter
+     * Gets services matching the specified filter criteria.
+     *
+     * @param {ServiceFilterOptions} [filter] - Optional filter options
+     * @returns {ServiceInfo[]} Array of matching services
+     *
+     * @example
+     * ```typescript
+     * // Get services by multiple criteria
+     * const services = discovery.getServices({
+     *   serviceName: 'api',
+     *   status: 'healthy',
+     *   tags: ['production'],
+     *   version: '2.0.0',
+     *   metadata: { region: 'us-east-1' },
+     * });
+     * ```
      */
     getServices(filter?: ServiceFilterOptions): ServiceInfo[] {
         let services = this.getAllServices();
@@ -194,7 +313,10 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Setup service discovery exchange and queues
+     * Sets up the service discovery exchange and queue.
+     *
+     * @private
+     * @returns {Promise<void>}
      */
     private async setupDiscovery(): Promise<void> {
         const exchange = this.getExchangeName();
@@ -205,7 +327,8 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         });
 
         // Subscribe to all service discovery events
-        const queue = `service.discovery.${this.serviceId}`;
+        // Using clear prefix to avoid collision with user queues
+        const queue = `__nestjs_rabbitmq_sd__.${this.serviceId}`;
 
         await this.rabbitMQService.assertQueue(queue, { autoDelete: true, exclusive: true });
         await this.rabbitMQService.bindQueue(queue, exchange, '*');
@@ -215,7 +338,12 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Publish service discovery event
+     * Publishes a service discovery event.
+     *
+     * @private
+     * @param {ServiceDiscoveryEventType} type - The event type
+     * @param {ServiceInfo} service - The service information
+     * @returns {Promise<void>}
      */
     private async publishServiceEvent(type: ServiceDiscoveryEventType, service: ServiceInfo): Promise<void> {
         const exchange = this.getExchangeName();
@@ -231,14 +359,26 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Check if service exists
+     * Checks if a service with the given name exists in the registry.
+     *
+     * @param {string} serviceName - The service name to check
+     * @returns {boolean} True if at least one service with that name exists
+     *
+     * @example
+     * ```typescript
+     * if (discovery.hasService('payment-service')) {
+     *   // Payment service is available
+     * }
+     * ```
      */
     hasService(serviceName: string): boolean {
         return this.getServices({ serviceName }).length > 0;
     }
 
     /**
-     * Cleanup dead services
+     * Cleans up services that have not sent a heartbeat within the timeout period.
+     *
+     * @private
      */
     private cleanupDeadServices(): void {
         const timeout = this.options.serviceTimeout || 90000;
@@ -257,12 +397,19 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         }
     }
 
+    /**
+     * Logs a debug message.
+     * @private
+     */
     private debug(message: string): void {
-        if (this.shouldLog('debug')) this.logger.debug(message);
+        if (shouldLog('debug', this.logLevel)) this.logger.debug(message);
     }
 
     /**
-     * Deregister this service
+     * Deregisters this service from the registry.
+     *
+     * @private
+     * @returns {Promise<void>}
      */
     private async deregisterService(): Promise<void> {
         const serviceInfo = this.services.get(this.serviceId);
@@ -280,7 +427,10 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Handle service discovery events
+     * Handles incoming service discovery events.
+     *
+     * @private
+     * @param {ServiceDiscoveryEvent} event - The received event
      */
     private handleServiceEvent(event: ServiceDiscoveryEvent): void {
         const { type, service } = event;
@@ -317,12 +467,19 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         }
     }
 
+    /**
+     * Logs an info message.
+     * @private
+     */
     private info(message: string): void {
-        if (this.shouldLog('log')) this.logger.log(message);
+        if (shouldLog('log', this.logLevel)) this.logger.log(message);
     }
 
     /**
-     * Register this service
+     * Registers this service in the registry.
+     *
+     * @private
+     * @returns {Promise<void>}
      */
     private async registerService(): Promise<void> {
         const serviceInfo = this.getCurrentServiceInfo();
@@ -336,7 +493,10 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Send heartbeat
+     * Sends a heartbeat to indicate this service is still alive.
+     *
+     * @private
+     * @returns {Promise<void>}
      */
     private async sendHeartbeat(): Promise<void> {
         const serviceInfo = this.services.get(this.serviceId);
@@ -349,24 +509,12 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         serviceInfo.status = 'healthy';
 
         await this.publishServiceEvent(ServiceDiscoveryEventType.SERVICE_HEARTBEAT, serviceInfo);
-
-        // heartbeat sent
-    }
-
-    private shouldLog(level: 'debug' | 'error' | 'log' | 'warn'): boolean {
-        const order: Record<'debug' | 'error' | 'log' | 'none' | 'warn', number> = {
-            debug: 3,
-            error: 0,
-            log: 2,
-            none: -1,
-            warn: 1,
-        };
-
-        return order[level] <= order[this.logLevel];
     }
 
     /**
-     * Start cleanup interval for dead services
+     * Starts the cleanup interval to remove dead services.
+     *
+     * @private
      */
     private startCleanup(): void {
         const interval = (this.options.heartbeatInterval || 30000) * 2;
@@ -379,7 +527,9 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Start heartbeat interval
+     * Starts the heartbeat interval.
+     *
+     * @private
      */
     private startHeartbeat(): void {
         const interval = this.options.heartbeatInterval || 30000;
@@ -394,7 +544,9 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Stop cleanup interval
+     * Stops the cleanup interval.
+     *
+     * @private
      */
     private stopCleanup(): void {
         if (this.cleanupInterval) {
@@ -404,7 +556,9 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
     }
 
     /**
-     * Stop heartbeat interval
+     * Stops the heartbeat interval.
+     *
+     * @private
      */
     private stopHeartbeat(): void {
         if (this.heartbeatInterval) {
@@ -413,7 +567,11 @@ export class ServiceDiscoveryService implements OnModuleDestroy, OnModuleInit {
         }
     }
 
+    /**
+     * Logs a warning message.
+     * @private
+     */
     private warn(message: string): void {
-        if (this.shouldLog('warn')) this.logger.warn(message);
+        if (shouldLog('warn', this.logLevel)) this.logger.warn(message);
     }
 }

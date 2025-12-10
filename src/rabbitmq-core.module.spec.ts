@@ -1,7 +1,7 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { RabbitMQCoreModule } from './rabbitmq-core.module';
-import { RabbitMQModuleOptions, RabbitMQOptionsFactory } from './interfaces/rabbitmq-options.interface';
+import type { RabbitMQModuleOptions, RabbitMQOptionsFactory } from './interfaces/rabbitmq-options.interface';
+
 import { RABBITMQ_CONNECTION_MANAGER, RABBITMQ_MODULE_OPTIONS, RABBITMQ_SERVICE } from './constants';
+import { RabbitMQCoreModule } from './rabbitmq-core.module';
 
 describe('RabbitMQCoreModule', () => {
     describe('forRoot', () => {
@@ -20,59 +20,57 @@ describe('RabbitMQCoreModule', () => {
 
         it('should create providers with custom connection name', () => {
             const options: RabbitMQModuleOptions = {
-                uri: 'amqp://localhost',
                 connectionName: 'custom',
+                uri: 'amqp://localhost',
             };
 
             const dynamicModule = RabbitMQCoreModule.forRoot(options);
 
             expect(dynamicModule.providers).toHaveLength(3);
-            expect(dynamicModule.providers?.some((p: any) => 
-                p.provide === `${RABBITMQ_CONNECTION_MANAGER}_custom`
-            )).toBe(true);
+            expect(
+                dynamicModule.providers?.some((p: any) => p.provide === `${RABBITMQ_CONNECTION_MANAGER}_custom`),
+            ).toBe(true);
         });
 
         it('should include exchanges in options', () => {
             const options: RabbitMQModuleOptions = {
+                exchanges: [{ name: 'test-exchange', type: 'topic' }],
                 uri: 'amqp://localhost',
-                exchanges: [
-                    { name: 'test-exchange', type: 'topic' },
-                ],
             };
 
             const dynamicModule = RabbitMQCoreModule.forRoot(options);
 
             expect(dynamicModule).toBeDefined();
-            const optionsProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`
+            const optionsProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`,
             );
+
             expect(optionsProvider).toBeDefined();
             expect((optionsProvider as any).useValue.exchanges).toEqual(options.exchanges);
         });
 
         it('should include queues in options', () => {
             const options: RabbitMQModuleOptions = {
+                queues: [{ name: 'test-queue', options: { durable: true } }],
                 uri: 'amqp://localhost',
-                queues: [
-                    { name: 'test-queue', options: { durable: true } },
-                ],
             };
 
             const dynamicModule = RabbitMQCoreModule.forRoot(options);
 
-            const optionsProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`
+            const optionsProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`,
             );
+
             expect((optionsProvider as any).useValue.queues).toEqual(options.queues);
         });
 
         it('should include service discovery provider when enabled', () => {
             const options: RabbitMQModuleOptions = {
-                uri: 'amqp://localhost',
                 serviceDiscovery: {
                     enabled: true,
                     serviceName: 'test-service',
                 },
+                uri: 'amqp://localhost',
             };
 
             const dynamicModule = RabbitMQCoreModule.forRoot(options);
@@ -94,19 +92,20 @@ describe('RabbitMQCoreModule', () => {
 
         it('should use custom connection options', () => {
             const options: RabbitMQModuleOptions = {
-                uri: 'amqp://localhost',
                 connectionOptions: {
                     heartbeatIntervalInSeconds: 10,
                     reconnectTimeInSeconds: 20,
                 },
+                uri: 'amqp://localhost',
             };
 
             const dynamicModule = RabbitMQCoreModule.forRoot(options);
 
             expect(dynamicModule).toBeDefined();
-            const optionsProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`
+            const optionsProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`,
             );
+
             expect((optionsProvider as any).useValue.connectionOptions).toEqual(options.connectionOptions);
         });
     });
@@ -133,9 +132,10 @@ describe('RabbitMQCoreModule', () => {
                 }),
             });
 
-            const optionsProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`
+            const optionsProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`,
             );
+
             expect(optionsProvider).toBeDefined();
             expect((optionsProvider as any).inject).toContain('CONFIG_SERVICE');
         });
@@ -169,9 +169,10 @@ describe('RabbitMQCoreModule', () => {
             });
 
             expect(dynamicModule).toBeDefined();
-            const optionsProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`
+            const optionsProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`,
             );
+
             expect(optionsProvider).toBeDefined();
         });
 
@@ -183,14 +184,14 @@ describe('RabbitMQCoreModule', () => {
                 }),
             });
 
-            expect(dynamicModule.providers?.some((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_async-custom`
-            )).toBe(true);
+            expect(
+                dynamicModule.providers?.some((p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_async-custom`),
+            ).toBe(true);
         });
 
         it('should import specified modules', () => {
             class ConfigModule {}
-            
+
             const dynamicModule = RabbitMQCoreModule.forRootAsync({
                 imports: [ConfigModule],
                 useFactory: () => ({
@@ -202,62 +203,8 @@ describe('RabbitMQCoreModule', () => {
         });
     });
 
-    describe.skip('onModuleInit', () => {
-        let module: RabbitMQCoreModule;
-        let discoveryService: any;
-        let moduleRef: any;
-
-        beforeEach(() => {
-            discoveryService = {
-                providerMethodsWithMetaAtKey: jest.fn().mockResolvedValue([]),
-            } as any;
-
-            moduleRef = {
-                get: jest.fn(),
-            };
-
-            module = new RabbitMQCoreModule(moduleRef as any, { values: () => [] } as any);
-        });
-
-        it('should discover and register subscribers', async () => {
-            const mockSubscribers = [
-                {
-                    discoveredMethod: {
-                        methodName: 'handleMessage',
-                        parentClass: {
-                            instance: {},
-                        },
-                        handler: jest.fn(),
-                    },
-                    meta: {
-                        queue: 'test-queue',
-                    },
-                },
-            ];
-
-            discoveryService.providerMethodsWithMetaAtKey.mockResolvedValue(mockSubscribers as any);
-
-            await module.onApplicationBootstrap();
-
-            expect(discoveryService.providerMethodsWithMetaAtKey).toHaveBeenCalled();
-        });
-
-        it('should handle empty subscribers list', async () => {
-            discoveryService.providerMethodsWithMetaAtKey.mockResolvedValue([]);
-
-            await expect(module.onApplicationBootstrap()).resolves.not.toThrow();
-            expect(discoveryService.providerMethodsWithMetaAtKey).toHaveBeenCalled();
-        });
-
-        it('should log discovery process', async () => {
-            const logSpy = jest.spyOn((module as any).logger, 'log');
-
-            await module.onApplicationBootstrap();
-
-            expect(logSpy).toHaveBeenCalledWith('Discovering RabbitMQ subscribers...');
-            expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Registered'));
-        });
-    });
+    // Note: onModuleInit tests have been moved to 'internal discovery' describe block
+    // which uses the new MetadataScanner-based implementation
 
     describe('integration', () => {
         it('should be compatible with NestJS module system', async () => {
@@ -272,13 +219,13 @@ describe('RabbitMQCoreModule', () => {
 
         it('should support multiple connection names', () => {
             const module1 = RabbitMQCoreModule.forRoot({
-                uri: 'amqp://localhost',
                 connectionName: 'connection1',
+                uri: 'amqp://localhost',
             });
 
             const module2 = RabbitMQCoreModule.forRoot({
-                uri: 'amqp://localhost',
                 connectionName: 'connection2',
+                uri: 'amqp://localhost',
             });
 
             expect(module1.providers).not.toEqual(module2.providers);
@@ -306,292 +253,21 @@ describe('RabbitMQCoreModule', () => {
         });
     });
 
-    describe.skip('registerSubscriber', () => {
-        let module: RabbitMQCoreModule;
-        let discoveryService: any;
-        let moduleRef: any;
-        let mockRabbitService: any;
-
-        beforeEach(() => {
-            discoveryService = {
-                providerMethodsWithMetaAtKey: jest.fn().mockResolvedValue([]),
-            } as any;
-
-            mockRabbitService = {
-                assertQueue: jest.fn().mockResolvedValue(undefined),
-                bindQueue: jest.fn().mockResolvedValue(undefined),
-                consume: jest.fn().mockResolvedValue(undefined),
-            };
-
-            moduleRef = {
-                get: jest.fn().mockReturnValue(mockRabbitService),
-            };
-
-            module = new RabbitMQCoreModule(moduleRef as any, { values: () => [] } as any);
-        });
-
-        it('should register subscriber with queue only', async () => {
-            const handler = jest.fn();
-            const mockSubscribers = [
-                {
-                    discoveredMethod: {
-                        methodName: 'handleMessage',
-                        parentClass: {
-                            name: 'TestClass',
-                            instance: {},
-                        },
-                        handler,
-                    },
-                    meta: {
-                        queue: 'test-queue',
-                    },
-                },
-            ];
-
-            discoveryService.providerMethodsWithMetaAtKey.mockResolvedValue(mockSubscribers as any);
-
-            await module.onApplicationBootstrap();
-
-            expect(mockRabbitService.assertQueue).toHaveBeenCalledWith('test-queue', undefined);
-            expect(mockRabbitService.consume).toHaveBeenCalled();
-        });
-
-        it('should register subscriber with exchange and routing key', async () => {
-            const handler = jest.fn();
-            const mockSubscribers = [
-                {
-                    discoveredMethod: {
-                        methodName: 'handleMessage',
-                        parentClass: {
-                            name: 'TestClass',
-                            instance: {},
-                        },
-                        handler,
-                    },
-                    meta: {
-                        queue: 'test-queue',
-                        exchange: 'test-exchange',
-                        routingKey: 'test.key',
-                    },
-                },
-            ];
-
-            discoveryService.providerMethodsWithMetaAtKey.mockResolvedValue(mockSubscribers as any);
-
-            await module.onApplicationBootstrap();
-
-            expect(mockRabbitService.assertQueue).toHaveBeenCalled();
-            expect(mockRabbitService.bindQueue).toHaveBeenCalledWith('test-queue', 'test-exchange', 'test.key');
-            expect(mockRabbitService.consume).toHaveBeenCalled();
-        });
-
-        it('should handle RPC subscribers', async () => {
-            const handler = jest.fn().mockResolvedValue({ result: 'success' });
-            const instance = {};
-            const mockSubscribers = [
-                {
-                    discoveredMethod: {
-                        methodName: 'handleRPC',
-                        parentClass: {
-                            name: 'TestClass',
-                            instance,
-                        },
-                        handler,
-                    },
-                    meta: {
-                        queue: 'rpc-queue',
-                        rpc: true,
-                    },
-                },
-            ];
-
-            discoveryService.providerMethodsWithMetaAtKey.mockResolvedValue(mockSubscribers as any);
-
-            await module.onApplicationBootstrap();
-
-            // Get the consumer handler
-            const consumerHandler = mockRabbitService.consume.mock.calls[0][1];
-            
-            // Call the handler with a message
-            const result = await consumerHandler({ data: 'test' });
-
-            expect(handler).toHaveBeenCalledWith({ data: 'test' });
-            expect(result).toEqual({ result: 'success' });
-        });
-
-        it('should handle errors in subscriber with error handler', async () => {
-            const error = new Error('Handler error');
-            const handler = jest.fn().mockRejectedValue(error);
-            const errorHandler = jest.fn().mockResolvedValue(undefined);
-            const instance = {};
-            const mockSubscribers = [
-                {
-                    discoveredMethod: {
-                        methodName: 'handleMessage',
-                        parentClass: {
-                            name: 'TestClass',
-                            instance,
-                        },
-                        handler,
-                    },
-                    meta: {
-                        queue: 'test-queue',
-                        errorHandler,
-                    },
-                },
-            ];
-
-            discoveryService.providerMethodsWithMetaAtKey.mockResolvedValue(mockSubscribers as any);
-
-            await module.onApplicationBootstrap();
-
-            // Get the consumer handler
-            const consumerHandler = mockRabbitService.consume.mock.calls[0][1];
-            
-            // Call the handler and expect it to throw
-            await expect(consumerHandler({ data: 'test' })).rejects.toThrow('Handler error');
-
-            expect(errorHandler).toHaveBeenCalledWith(error, { data: 'test' });
-        });
-
-        it('should handle errors in subscriber without error handler', async () => {
-            const error = new Error('Handler error');
-            const handler = jest.fn().mockRejectedValue(error);
-            const instance = {};
-            const mockSubscribers = [
-                {
-                    discoveredMethod: {
-                        methodName: 'handleMessage',
-                        parentClass: {
-                            name: 'TestClass',
-                            instance,
-                        },
-                        handler,
-                    },
-                    meta: {
-                        queue: 'test-queue',
-                    },
-                },
-            ];
-
-            discoveryService.providerMethodsWithMetaAtKey.mockResolvedValue(mockSubscribers as any);
-
-            await module.onApplicationBootstrap();
-
-            // Get the consumer handler
-            const consumerHandler = mockRabbitService.consume.mock.calls[0][1];
-            
-            // Call the handler and expect it to throw
-            await expect(consumerHandler({ data: 'test' })).rejects.toThrow('Handler error');
-        });
-
-        it('should log error when RabbitMQ service not found', async () => {
-            moduleRef.get.mockReturnValue(null);
-
-            const mockSubscribers = [
-                {
-                    discoveredMethod: {
-                        methodName: 'handleMessage',
-                        parentClass: {
-                            name: 'TestClass',
-                            instance: {},
-                        },
-                        handler: jest.fn(),
-                    },
-                    meta: {
-                        queue: 'test-queue',
-                        connectionName: 'non-existent',
-                    },
-                },
-            ];
-
-            discoveryService.providerMethodsWithMetaAtKey.mockResolvedValue(mockSubscribers as any);
-
-            const errorSpy = jest.spyOn((module as any).logger, 'error');
-
-            await module.onApplicationBootstrap();
-
-            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('RabbitMQ service not found'));
-            expect(mockRabbitService.assertQueue).not.toHaveBeenCalled();
-        });
-
-        it('should log error when subscriber registration fails', async () => {
-            mockRabbitService.assertQueue.mockRejectedValue(new Error('Queue assertion failed'));
-
-            const mockSubscribers = [
-                {
-                    discoveredMethod: {
-                        methodName: 'handleMessage',
-                        parentClass: {
-                            name: 'TestClass',
-                            instance: {},
-                        },
-                        handler: jest.fn(),
-                    },
-                    meta: {
-                        queue: 'test-queue',
-                    },
-                },
-            ];
-
-            discoveryService.providerMethodsWithMetaAtKey.mockResolvedValue(mockSubscribers as any);
-
-            const errorSpy = jest.spyOn((module as any).logger, 'error');
-
-            await module.onApplicationBootstrap();
-
-            expect(errorSpy).toHaveBeenCalledWith(
-                expect.stringContaining('Failed to register subscriber'),
-                expect.any(String)
-            );
-        });
-
-        it('should use custom connectionName from subscriber options', async () => {
-            const customModuleRef = {
-                get: jest.fn().mockReturnValue(mockRabbitService),
-            };
-            const customModule = new RabbitMQCoreModule(customModuleRef as any, { values: () => [] } as any);
-
-            const mockSubscribers = [
-                {
-                    discoveredMethod: {
-                        methodName: 'handleMessage',
-                        parentClass: {
-                            name: 'TestClass',
-                            instance: {},
-                        },
-                        handler: jest.fn(),
-                    },
-                    meta: {
-                        queue: 'test-queue',
-                        connectionName: 'custom-connection',
-                    },
-                },
-            ];
-
-            discoveryService.providerMethodsWithMetaAtKey.mockResolvedValue(mockSubscribers as any);
-
-            await customModule.onApplicationBootstrap();
-
-            expect(customModuleRef.get).toHaveBeenCalledWith(
-                `${RABBITMQ_CONNECTION_MANAGER}_custom-connection`,
-                { strict: false }
-            );
-        });
-    });
+    // Note: registerSubscriber tests have been moved to 'internal discovery' describe block
+    // which uses the new MetadataScanner-based implementation
 
     describe('provider factories', () => {
         it('should execute connection manager factory in forRoot', async () => {
             const dynamicModule = RabbitMQCoreModule.forRoot({
-                uri: 'amqp://localhost',
                 connectionOptions: {
                     heartbeatIntervalInSeconds: 15,
                     reconnectTimeInSeconds: 30,
                 },
+                uri: 'amqp://localhost',
             });
 
-            const connectionProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_CONNECTION_MANAGER}_default`
+            const connectionProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_CONNECTION_MANAGER}_default`,
             ) as any;
 
             expect(connectionProvider).toBeDefined();
@@ -600,19 +276,16 @@ describe('RabbitMQCoreModule', () => {
 
         it('should execute service factory in forRoot with exchanges and queues', async () => {
             const dynamicModule = RabbitMQCoreModule.forRoot({
+                exchanges: [{ name: 'test-exchange', type: 'topic' }],
+                queues: [{ name: 'test-queue', options: { durable: true } }],
                 uri: 'amqp://localhost',
-                exchanges: [
-                    { name: 'test-exchange', type: 'topic' },
-                ],
-                queues: [
-                    { name: 'test-queue', options: { durable: true } },
-                ],
             });
 
             // Find the service provider by its token
-            const serviceProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_SERVICE}_default`
+            const serviceProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_SERVICE}_default`,
             ) as any;
+
             expect(serviceProvider.useFactory).toBeDefined();
             expect(serviceProvider.inject).toContain(`${RABBITMQ_CONNECTION_MANAGER}_default`);
         });
@@ -620,17 +293,18 @@ describe('RabbitMQCoreModule', () => {
         it('should execute connection manager factory in forRootAsync', async () => {
             const dynamicModule = RabbitMQCoreModule.forRootAsync({
                 useFactory: () => ({
-                    uri: 'amqp://localhost',
                     connectionOptions: {
                         heartbeatIntervalInSeconds: 8,
                         reconnectTimeInSeconds: 15,
                     },
+                    uri: 'amqp://localhost',
                 }),
             });
 
-            const connectionProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_CONNECTION_MANAGER}_default` &&
-                p.inject?.includes(`${RABBITMQ_MODULE_OPTIONS}_default`)
+            const connectionProvider = dynamicModule.providers?.find(
+                (p: any) =>
+                    p.provide === `${RABBITMQ_CONNECTION_MANAGER}_default` &&
+                    p.inject?.includes(`${RABBITMQ_MODULE_OPTIONS}_default`),
             ) as any;
 
             expect(connectionProvider).toBeDefined();
@@ -640,18 +314,14 @@ describe('RabbitMQCoreModule', () => {
         it('should execute service factory in forRootAsync with exchanges and queues', async () => {
             const dynamicModule = RabbitMQCoreModule.forRootAsync({
                 useFactory: () => ({
+                    exchanges: [{ name: 'async-exchange', type: 'direct' }],
+                    queues: [{ name: 'async-queue', options: { exclusive: true } }],
                     uri: 'amqp://localhost',
-                    exchanges: [
-                        { name: 'async-exchange', type: 'direct' },
-                    ],
-                    queues: [
-                        { name: 'async-queue', options: { exclusive: true } },
-                    ],
                 }),
             });
 
-            const serviceProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_SERVICE}_default`
+            const serviceProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_SERVICE}_default`,
             ) as any;
 
             expect(serviceProvider).toBeDefined();
@@ -664,12 +334,12 @@ describe('RabbitMQCoreModule', () => {
             });
 
             const dynamicModule = RabbitMQCoreModule.forRootAsync({
-                useFactory: factoryFn,
                 inject: ['CONFIG_SERVICE'],
+                useFactory: factoryFn,
             });
 
-            const optionsProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`
+            const optionsProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`,
             ) as any;
 
             expect(optionsProvider).toBeDefined();
@@ -688,8 +358,8 @@ describe('RabbitMQCoreModule', () => {
                 useClass: TestFactory,
             });
 
-            const optionsProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`
+            const optionsProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`,
             ) as any;
 
             expect(optionsProvider).toBeDefined();
@@ -698,9 +368,8 @@ describe('RabbitMQCoreModule', () => {
             expect(optionsProvider.inject[0]).toBe(TestFactory);
 
             // Verify class provider is also included
-            const classProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === TestFactory
-            );
+            const classProvider = dynamicModule.providers?.find((p: any) => p.provide === TestFactory);
+
             expect(classProvider).toBeDefined();
         });
 
@@ -715,8 +384,8 @@ describe('RabbitMQCoreModule', () => {
                 useExisting: ExistingFactory,
             });
 
-            const optionsProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`
+            const optionsProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`,
             ) as any;
 
             expect(optionsProvider).toBeDefined();
@@ -735,14 +404,15 @@ describe('RabbitMQCoreModule', () => {
 
         it('should expose connection manager factory in forRoot', () => {
             const dynamicModule = RabbitMQCoreModule.forRoot({
-                uri: 'amqp://test-host',
                 connectionOptions: {
                     heartbeatIntervalInSeconds: 20,
                     reconnectTimeInSeconds: 25,
                 },
+                uri: 'amqp://test-host',
             });
 
             const connectionProvider = dynamicModule.providers?.[0] as any;
+
             expect(typeof connectionProvider.useFactory).toBe('function');
         });
 
@@ -753,29 +423,24 @@ describe('RabbitMQCoreModule', () => {
             };
 
             const dynamicModule = RabbitMQCoreModule.forRoot({
+                exchanges: [{ name: 'factory-exchange', type: 'fanout' }],
+                queues: [{ name: 'factory-queue', options: { durable: false } }],
                 uri: 'amqp://localhost',
-                exchanges: [
-                    { name: 'factory-exchange', type: 'fanout' },
-                ],
-                queues: [
-                    { name: 'factory-queue', options: { durable: false } },
-                ],
             });
 
             // Get service provider by token
-            const serviceProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_SERVICE}_default`
+            const serviceProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_SERVICE}_default`,
             ) as any;
 
             // Mock RabbitMQService methods
             const mockService = {
-                initialize: jest.fn().mockResolvedValue(undefined),
                 assertExchange: jest.fn().mockResolvedValue(undefined),
                 assertQueue: jest.fn().mockResolvedValue(undefined),
+                initialize: jest.fn().mockResolvedValue(undefined),
             };
 
-            jest.spyOn(require('./services/rabbitmq.service'), 'RabbitMQService')
-                .mockImplementation(() => mockService);
+            jest.spyOn(require('./services/rabbitmq.service'), 'RabbitMQService').mockImplementation(() => mockService);
 
             // Call the factory
             await serviceProvider.useFactory(mockConnectionManager);
@@ -787,20 +452,21 @@ describe('RabbitMQCoreModule', () => {
 
         it('should expose connection manager factory in forRootAsync', () => {
             const mockOptions = {
-                uri: 'amqp://async-host',
                 connectionOptions: {
                     heartbeatIntervalInSeconds: 12,
                     reconnectTimeInSeconds: 18,
                 },
+                uri: 'amqp://async-host',
             };
 
             const dynamicModule = RabbitMQCoreModule.forRootAsync({
                 useFactory: () => mockOptions,
             });
 
-            const connectionProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_CONNECTION_MANAGER}_default` &&
-                p.inject?.includes(`${RABBITMQ_MODULE_OPTIONS}_default`)
+            const connectionProvider = dynamicModule.providers?.find(
+                (p: any) =>
+                    p.provide === `${RABBITMQ_CONNECTION_MANAGER}_default` &&
+                    p.inject?.includes(`${RABBITMQ_MODULE_OPTIONS}_default`),
             ) as any;
 
             expect(typeof connectionProvider.useFactory).toBe('function');
@@ -808,21 +474,17 @@ describe('RabbitMQCoreModule', () => {
 
         it('should call service factory in forRootAsync with exchanges and queues', async () => {
             const mockOptions: RabbitMQModuleOptions = {
+                exchanges: [{ name: 'async-factory-exchange', type: 'headers' as const }],
+                queues: [{ name: 'async-factory-queue', options: { exclusive: true } }],
                 uri: 'amqp://localhost',
-                exchanges: [
-                    { name: 'async-factory-exchange', type: 'headers' as const },
-                ],
-                queues: [
-                    { name: 'async-factory-queue', options: { exclusive: true } },
-                ],
             };
 
             const dynamicModule = RabbitMQCoreModule.forRootAsync({
                 useFactory: () => mockOptions,
             });
 
-            const serviceProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_SERVICE}_default`
+            const serviceProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_SERVICE}_default`,
             ) as any;
 
             const mockConnectionManager = {
@@ -831,13 +493,12 @@ describe('RabbitMQCoreModule', () => {
             };
 
             const mockService = {
-                initialize: jest.fn().mockResolvedValue(undefined),
                 assertExchange: jest.fn().mockResolvedValue(undefined),
                 assertQueue: jest.fn().mockResolvedValue(undefined),
+                initialize: jest.fn().mockResolvedValue(undefined),
             };
 
-            jest.spyOn(require('./services/rabbitmq.service'), 'RabbitMQService')
-                .mockImplementation(() => mockService);
+            jest.spyOn(require('./services/rabbitmq.service'), 'RabbitMQService').mockImplementation(() => mockService);
 
             // Call the factory
             await serviceProvider.useFactory(mockConnectionManager, mockOptions);
@@ -853,12 +514,12 @@ describe('RabbitMQCoreModule', () => {
             });
 
             const dynamicModule = RabbitMQCoreModule.forRootAsync({
-                useFactory: mockFactory,
                 inject: ['DEPENDENCY'],
+                useFactory: mockFactory,
             });
 
-            const optionsProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`
+            const optionsProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`,
             ) as any;
 
             // Call the factory
@@ -878,11 +539,12 @@ describe('RabbitMQCoreModule', () => {
                 useClass: MockFactory,
             });
 
-            const optionsProvider = dynamicModule.providers?.find((p: any) => 
-                p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`
+            const optionsProvider = dynamicModule.providers?.find(
+                (p: any) => p.provide === `${RABBITMQ_MODULE_OPTIONS}_default`,
             ) as any;
 
             const mockFactoryInstance = new MockFactory();
+
             jest.spyOn(mockFactoryInstance, 'createRabbitMQOptions');
 
             // Call the factory
@@ -904,18 +566,26 @@ describe('RabbitMQCoreModule', () => {
                 };
 
                 class TestProvider {
-                    handler(_: any) { /* noop */ }
+                    handler(_: any) {
+                        /* noop */
+                    }
                 }
 
                 // Attach subscribe metadata on the method function
                 const SUBSCRIBE_KEY = 'RABBITMQ_SUBSCRIBE_METADATA';
-                Reflect.defineMetadata(SUBSCRIBE_KEY, { queue: 'q1', exchange: 'ex', routingKey: 'rk' }, TestProvider.prototype.handler);
+
+                Reflect.defineMetadata(
+                    SUBSCRIBE_KEY,
+                    { exchange: 'ex', queue: 'q1', routingKey: 'rk' },
+                    TestProvider.prototype.handler,
+                );
 
                 const providerRecord: any = { instance: new TestProvider() };
                 const fakeNestModule: any = { providers: new Map([[Symbol('prov'), providerRecord]]) };
                 const modulesContainer: any = { values: () => [fakeNestModule] };
 
                 const core = new RabbitMQCoreModule(moduleRef, modulesContainer);
+
                 await core.onApplicationBootstrap();
 
                 expect(moduleRef.get).toHaveBeenCalled();
@@ -925,7 +595,12 @@ describe('RabbitMQCoreModule', () => {
             });
 
             it('should discover @RabbitRPC and register rpc handler', async () => {
-                const channel = { consume: jest.fn().mockResolvedValue(undefined), sendToQueue: jest.fn(), ack: jest.fn(), nack: jest.fn() } as any;
+                const channel = {
+                    ack: jest.fn(),
+                    consume: jest.fn().mockResolvedValue(undefined),
+                    nack: jest.fn(),
+                    sendToQueue: jest.fn(),
+                } as any;
                 const mockRabbitService = {
                     assertQueue: jest.fn().mockResolvedValue(undefined),
                     getChannel: jest.fn().mockReturnValue(channel),
@@ -934,17 +609,21 @@ describe('RabbitMQCoreModule', () => {
                 const moduleRef: any = { get: jest.fn().mockReturnValue(mockRabbitService) };
 
                 class TestProvider {
-                    rpc(_: any) { return { ok: true }; }
+                    rpc(_: any) {
+                        return { ok: true };
+                    }
                 }
 
                 const RPC_KEY = 'RABBIT_RPC_METADATA';
-                Reflect.defineMetadata(RPC_KEY, { queue: 'rpc-q', prefetchCount: 1 }, TestProvider.prototype.rpc);
+
+                Reflect.defineMetadata(RPC_KEY, { prefetchCount: 1, queue: 'rpc-q' }, TestProvider.prototype.rpc);
 
                 const providerRecord: any = { instance: new TestProvider() };
                 const fakeNestModule: any = { providers: new Map([[Symbol('prov'), providerRecord]]) };
                 const modulesContainer: any = { values: () => [fakeNestModule] };
 
                 const core = new RabbitMQCoreModule(moduleRef, modulesContainer);
+
                 await core.onApplicationBootstrap();
 
                 expect(moduleRef.get).toHaveBeenCalled();
@@ -955,8 +634,12 @@ describe('RabbitMQCoreModule', () => {
             it('should log error if RabbitMQService not found', async () => {
                 const moduleRef: any = { get: jest.fn().mockReturnValue(undefined) };
 
-                class P { h(_: any) {} }
+                class P {
+                    h(_: any) {}
+                }
+
                 const SUBSCRIBE_KEY = 'RABBITMQ_SUBSCRIBE_METADATA';
+
                 Reflect.defineMetadata(SUBSCRIBE_KEY, { queue: 'q1' }, P.prototype.h);
 
                 const providerRecord: any = { instance: new P() };
@@ -965,10 +648,10 @@ describe('RabbitMQCoreModule', () => {
 
                 const core: any = new RabbitMQCoreModule(moduleRef, modulesContainer);
                 const errorSpy = jest.spyOn(core['logger'], 'error').mockImplementation(() => undefined as any);
+
                 await core.onApplicationBootstrap();
                 expect(errorSpy).toHaveBeenCalled();
             });
         });
     });
 });
-

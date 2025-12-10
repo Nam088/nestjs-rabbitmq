@@ -1,194 +1,300 @@
 /**
- * Service discovery event types
+ * @fileoverview Service discovery interfaces.
+ * Defines types for the decentralized service registry feature.
+ */
+
+/**
+ * Types of service discovery events that can be published/received.
  */
 export enum ServiceDiscoveryEventType {
+    /** Service has been removed from the registry */
     SERVICE_DEREGISTERED = 'service.deregistered',
+
+    /** Service has become healthy */
     SERVICE_HEALTHY = 'service.healthy',
+
+    /** Periodic heartbeat to indicate service is alive */
     SERVICE_HEARTBEAT = 'service.heartbeat',
+
+    /** New service has registered */
     SERVICE_REGISTERED = 'service.registered',
+
+    /** Service has become unhealthy */
     SERVICE_UNHEALTHY = 'service.unhealthy',
 }
 
 /**
- * Service discovery event
+ * Event structure for service discovery messages.
+ *
+ * @example
+ * ```typescript
+ * const event: ServiceDiscoveryEvent = {
+ *   type: ServiceDiscoveryEventType.SERVICE_REGISTERED,
+ *   service: {
+ *     serviceId: 'abc-123',
+ *     serviceName: 'order-service',
+ *     host: 'localhost',
+ *     port: 3000,
+ *     status: 'healthy',
+ *     // ...
+ *   },
+ *   timestamp: new Date(),
+ * };
+ * ```
  */
 export interface ServiceDiscoveryEvent {
+    /** The service information */
     service: ServiceInfo;
+
+    /** When the event occurred */
     timestamp: Date;
+
+    /** Type of discovery event */
     type: ServiceDiscoveryEventType;
 }
 
 /**
- * Service discovery options
+ * Configuration options for service discovery.
+ *
+ * @example
+ * ```typescript
+ * const options: ServiceDiscoveryOptions = {
+ *   enabled: true,
+ *   serviceName: 'order-service',
+ *   version: '2.0.0',
+ *   port: 3000,
+ *   tags: ['api', 'production'],
+ *   metadata: { region: 'us-east-1' },
+ *   heartbeatInterval: 30000,
+ *   serviceTimeout: 90000,
+ * };
+ * ```
  */
 export interface ServiceDiscoveryOptions {
     /**
-     * Routing key prefix for service deregistration
+     * Routing key for service deregistration events.
      * @default 'service.deregister'
      */
     deregistrationRoutingKey?: string;
 
     /**
-     * Exchange name for service discovery
+     * Exchange name for service discovery messages.
      * @default 'service.discovery'
      */
     discoveryExchange?: string;
 
     /**
-     * Enable/disable service discovery
+     * Enable or disable service discovery.
+     * When disabled, the service will not register or participate in discovery.
      * @default false
      */
     enabled?: boolean;
 
     /**
-     * Health check endpoint
+     * Health check endpoint path.
+     * Other services can use this to verify health.
+     * @example '/health'
      */
     healthCheckEndpoint?: string;
 
     /**
-     * Heartbeat interval in milliseconds
+     * Interval between heartbeat messages in milliseconds.
      * @default 30000 (30 seconds)
      */
     heartbeatInterval?: number;
 
     /**
-     * Routing key prefix for service heartbeat
+     * Routing key for heartbeat events.
      * @default 'service.heartbeat'
      */
     heartbeatRoutingKey?: string;
 
     /**
-     * Service host
+     * Host address where this service is accessible.
+     * @default os.hostname()
      */
     host?: string;
 
-    /** Log level for discovery internals */
+    /**
+     * Log level for service discovery internals.
+     * @default 'error'
+     */
     logLevel?: 'debug' | 'error' | 'log' | 'none' | 'warn';
 
     /**
-     * Service metadata
+     * Custom metadata to include with service registration.
+     * Can be used for filtering or routing decisions.
+     *
+     * @example
+     * ```typescript
+     * metadata: {
+     *   region: 'us-east-1',
+     *   environment: 'production',
+     *   capabilities: ['payments', 'refunds'],
+     * }
+     * ```
      */
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
 
     /**
-     * Service port
+     * Port number where this service is accessible.
      */
     port?: number;
 
     /**
-     * Routing key prefix for service registration
+     * Routing key for service registration events.
      * @default 'service.register'
      */
     registrationRoutingKey?: string;
 
     /**
-     * Service name to register
+     * Name to register this service as.
+     * Used by other services to discover this service.
      */
     serviceName?: string;
 
     /**
-     * Service timeout in milliseconds (considered dead if no heartbeat)
+     * Time in milliseconds after which a service is considered dead
+     * if no heartbeat is received.
      * @default 90000 (90 seconds)
      */
     serviceTimeout?: number;
 
     /**
-     * Service tags
+     * Tags for categorizing and filtering services.
+     *
+     * @example
+     * ```typescript
+     * tags: ['api', 'production', 'v2']
+     * ```
      */
     tags?: string[];
 
     /**
-     * Service version
+     * Version string for this service.
+     * Can be used for routing to specific versions.
+     * @default '1.0.0'
      */
     version?: string;
 }
 
 /**
- * Service filter options
+ * Options for filtering services when querying the registry.
+ *
+ * @example
+ * ```typescript
+ * const services = discovery.getServices({
+ *   serviceName: 'user-service',
+ *   status: 'healthy',
+ *   version: '2.0.0',
+ *   tags: ['production'],
+ *   metadata: { region: 'us-east-1' },
+ * });
+ * ```
  */
 export interface ServiceFilterOptions {
     /**
-     * Filter by metadata
+     * Filter by matching metadata key-value pairs.
+     * All specified pairs must match.
      */
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
 
-    /**
-     * Filter by service name
-     */
+    /** Filter by exact service name match */
     serviceName?: string;
 
-    /**
-     * Filter by status
-     */
+    /** Filter by service health status */
     status?: 'healthy' | 'unhealthy' | 'unknown';
 
     /**
-     * Filter by tags
+     * Filter by tags.
+     * Services matching ANY of the specified tags will be included.
      */
     tags?: string[];
 
-    /**
-     * Filter by version
-     */
+    /** Filter by exact version match */
     version?: string;
 }
 
 /**
- * Service information stored in RabbitMQ
+ * Information about a registered service.
+ * This structure is stored in the service registry and exchanged in discovery events.
+ *
+ * @example
+ * ```typescript
+ * const service: ServiceInfo = {
+ *   serviceId: 'abc-123-def',
+ *   serviceName: 'order-service',
+ *   host: '192.168.1.100',
+ *   port: 3000,
+ *   version: '2.0.0',
+ *   status: 'healthy',
+ *   tags: ['api', 'production'],
+ *   metadata: { region: 'us-east-1' },
+ *   registeredAt: new Date('2024-01-01T00:00:00Z'),
+ *   lastHeartbeat: new Date('2024-01-01T00:01:00Z'),
+ *   healthCheckEndpoint: '/health',
+ * };
+ * ```
  */
 export interface ServiceInfo {
     /**
-     * Service health check endpoint
+     * Health check endpoint path for verifying service health.
      */
     healthCheckEndpoint?: string;
 
     /**
-     * Host where service is running
+     * Host address where the service is running.
      */
     host: string;
 
     /**
-     * Last heartbeat timestamp
+     * Timestamp of the last heartbeat received from this service.
+     * Used to determine if the service is still alive.
      */
     lastHeartbeat: Date;
 
     /**
-     * Service metadata
+     * Custom metadata associated with this service.
      */
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
 
     /**
-     * Port of the service
+     * Port number where the service is accessible.
      */
     port?: number;
 
     /**
-     * Timestamp when service was registered
+     * Timestamp when this service was first registered.
      */
     registeredAt: Date;
 
     /**
-     * Unique service identifier
+     * Unique identifier for this service instance.
+     * Generated automatically using UUID.
      */
     serviceId: string;
 
     /**
-     * Service name
+     * Logical name of the service.
+     * Multiple instances can share the same service name.
      */
     serviceName: string;
 
     /**
-     * Service status
+     * Current health status of the service.
+     * - `healthy`: Service is responding to heartbeats
+     * - `unhealthy`: Service has missed some heartbeats
+     * - `unknown`: Service status cannot be determined
      */
     status: 'healthy' | 'unhealthy' | 'unknown';
 
     /**
-     * Service tags for filtering
+     * Tags for categorizing and filtering.
      */
     tags?: string[];
 
     /**
-     * Service version
+     * Version of the service.
      */
     version: string;
 }

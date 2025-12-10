@@ -9,20 +9,24 @@ import { AmqpConnectionManager } from 'amqp-connection-manager';
 import { RabbitMQService } from './services/rabbitmq.service';
 import { ServiceDiscoveryService } from './services/service-discovery.service';
 
-import { RABBIT_CONTROLLER_KEY } from './decorators/rabbit-controller.decorator';
-
 import {
     RabbitMQModuleAsyncOptions,
     RabbitMQModuleOptions,
     RabbitMQOptionsFactory,
 } from './interfaces/rabbitmq-options.interface';
 
+import { getErrorStack } from './utils/log-utils';
+
 import {
     DEFAULT_CONNECTION_NAME,
+    RABBIT_CONTROLLER_KEY,
+    RABBIT_HANDLER_METADATA,
+    RABBIT_RPC_METADATA,
     RABBITMQ_CONNECTION_MANAGER,
     RABBITMQ_MODULE_OPTIONS,
     RABBITMQ_SERVICE,
     RABBITMQ_SERVICE_DISCOVERY,
+    RABBITMQ_SUBSCRIBE_METADATA,
 } from './constants';
 
 /**
@@ -157,10 +161,23 @@ export class RabbitMQCoreModule implements OnApplicationBootstrap {
             },
         };
 
+        // Service discovery provider (created conditionally based on moduleOptions at runtime)
+        const discoveryProvider: Provider = {
+            inject: [`${RABBITMQ_SERVICE}_${connectionName}`, `${RABBITMQ_MODULE_OPTIONS}_${connectionName}`],
+            provide: `${RABBITMQ_SERVICE_DISCOVERY}_${connectionName}`,
+            useFactory: (rabbitService: RabbitMQService, moduleOptions: RabbitMQModuleOptions) => {
+                if (!moduleOptions.serviceDiscovery?.enabled) {
+                    return null;
+                }
+
+                return new ServiceDiscoveryService(rabbitService, moduleOptions.serviceDiscovery);
+            },
+        };
+
         const asyncProviders = this.createAsyncProviders(options, connectionName);
 
-        const providers = [...asyncProviders, connectionManagerProvider, serviceProvider];
-        const exports = [serviceProvider];
+        const providers = [...asyncProviders, connectionManagerProvider, serviceProvider, discoveryProvider];
+        const exports = [serviceProvider, discoveryProvider];
 
         return {
             imports: options.imports || [],
@@ -234,6 +251,10 @@ export class RabbitMQCoreModule implements OnApplicationBootstrap {
         return [];
     }
 
+    private getProviderToken(provider: any): string | undefined {
+        return provider?.name || provider?.metatype?.name || provider?.token;
+    }
+
     private async processModuleProviders(moduleRef: any, options?: RabbitMQModuleOptions): Promise<void> {
         for (const provider of moduleRef.providers.values()) {
             if (!this.shouldScanProvider(provider, options)) continue;
@@ -249,24 +270,66 @@ export class RabbitMQCoreModule implements OnApplicationBootstrap {
         }
     }
 
-    private processProviderMethods(instance: Record<string, unknown>, prototype: any): void {
-        const SUBSCRIBE_KEY = 'RABBITMQ_SUBSCRIBE_METADATA';
-        const RPC_KEY = 'RABBIT_RPC_METADATA';
-
+    private processProviderMethods(instance: Record<string, unknown>, prototype: object): void {
         const methodNames = this.metadataScanner.getAllMethodNames(prototype);
 
         for (const methodName of methodNames) {
             // Get method descriptor (function) from prototype - SetMetadata stores on the function itself
-            const methodDescriptor = prototype[methodName];
+            const methodDescriptor = (prototype as Record<string, unknown>)[methodName];
 
             // Read metadata directly from method descriptor (like in tests: TestClass.prototype.handleRPC)
-            const subOptions: any = methodDescriptor ? Reflect.getMetadata(SUBSCRIBE_KEY, methodDescriptor) : null;
-            const rpcOptions: any = methodDescriptor ? Reflect.getMetadata(RPC_KEY, methodDescriptor) : null;
+            const subOptions = methodDescriptor
+                ? (Reflect.getMetadata(RABBITMQ_SUBSCRIBE_METADATA, methodDescriptor) as
+                      | Record<string, unknown>
+                      | undefined)
+                : undefined;
+            const rpcOptions = methodDescriptor
+                ? (Reflect.getMetadata(RABBIT_RPC_METADATA, methodDescriptor) as Record<string, unknown> | undefined)
+                : undefined;
+            const handlerOptions = methodDescriptor
+                ? (Reflect.getMetadata(RABBIT_HANDLER_METADATA, methodDescriptor) as
+                      | Record<string, unknown>
+                      | undefined)
+                : undefined;
 
             if (subOptions) void this.registerDiscoveredHandler(instance, methodName, subOptions);
 
             if (rpcOptions) void this.registerDiscoveredRpcHandler(instance, methodName, rpcOptions);
+
+            // @RabbitHandler is an alias for @RabbitSubscribe, register the same way
+            if (handlerOptions) void this.registerDiscoveredHandler(instance, methodName, handlerOptions);
         }
+    }
+
+    private hasRabbitControllerMetadata(provider: any): boolean {
+        const instance = provider.instance as Record<string, unknown> | undefined;
+        const ctor = instance?.constructor ?? provider?.metatype;
+
+        return !!(ctor && Reflect.getMetadata && Reflect.getMetadata(RABBIT_CONTROLLER_KEY, ctor));
+    }
+
+    private isProviderExcluded(provider: any, token: string | undefined, options?: RabbitMQModuleOptions): boolean {
+        const excludeList = options?.excludeProviders;
+
+        if (!excludeList || excludeList.length === 0) {
+            return false;
+        }
+
+        return excludeList.some((p: any) => this.matchesProvider(p, token, provider?.metatype));
+    }
+
+    private isProviderIncluded(provider: any, token: string | undefined, options?: RabbitMQModuleOptions): boolean {
+        const includeList = options?.includeProviders;
+
+        if (!includeList || includeList.length === 0) {
+            return true;
+        }
+
+        return includeList.some((p: any) => this.matchesProvider(p, token, provider?.metatype));
+    }
+
+    private matchesProvider(pattern: any, token: string | undefined, metatype: any): boolean {
+        return typeof pattern === 'string' ? pattern === token : pattern === metatype;
     }
 
     private async registerDiscoveredHandler(
@@ -306,10 +369,10 @@ export class RabbitMQCoreModule implements OnApplicationBootstrap {
                     `Registered subscriber: ${instance.constructor?.name}.${methodName} -> ${options.queue}`,
                 );
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             this.logger.error(
                 `Failed to register subscriber ${(instance.constructor && (instance.constructor as any).name) || 'Unknown'}.${methodName}`,
-                error?.stack,
+                getErrorStack(error),
             );
         }
     }
@@ -369,10 +432,10 @@ export class RabbitMQCoreModule implements OnApplicationBootstrap {
                     }
 
                     channel.ack?.(msg);
-                } catch (error: any) {
+                } catch (error: unknown) {
                     this.logger.error(
                         `Failed to process RPC ${(instance.constructor && (instance.constructor as any).name) || 'Unknown'}.${methodName}`,
-                        error?.stack,
+                        getErrorStack(error),
                     );
                     channel.nack?.(msg, false, false);
                 }
@@ -407,32 +470,18 @@ export class RabbitMQCoreModule implements OnApplicationBootstrap {
 
     private shouldScanProvider(provider: any, options?: RabbitMQModuleOptions): boolean {
         const scope = options?.scanScope ?? 'all';
-        const token = provider?.name || provider?.metatype?.name || provider?.token;
+        const token = this.getProviderToken(provider);
 
-        // include/exclude filters
-        if (options?.excludeProviders && options.excludeProviders.length > 0) {
-            if (
-                options.excludeProviders.some((p: any) =>
-                    typeof p === 'string' ? p === token : p === provider?.metatype,
-                )
-            ) {
-                return false;
-            }
+        if (this.isProviderExcluded(provider, token, options)) {
+            return false;
         }
 
-        if (options?.includeProviders && options.includeProviders.length > 0) {
-            const included = options.includeProviders.some((p: any) =>
-                typeof p === 'string' ? p === token : p === provider?.metatype,
-            );
-
-            if (!included) return false;
+        if (!this.isProviderIncluded(provider, token, options)) {
+            return false;
         }
 
         if (scope === 'annotated') {
-            const instance = provider.instance as Record<string, unknown> | undefined;
-            const ctor = instance?.constructor ?? provider?.metatype;
-
-            return !!(ctor && Reflect.getMetadata && Reflect.getMetadata(RABBIT_CONTROLLER_KEY, ctor));
+            return this.hasRabbitControllerMetadata(provider);
         }
 
         return true;

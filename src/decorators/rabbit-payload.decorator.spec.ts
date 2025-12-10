@@ -9,6 +9,7 @@ describe('RabbitPayload Decorator', () => {
     it('should return null when message is falsy', () => {
         const ctx: any = { switchToRpc: () => ({ getData: () => null }) };
         const result = resolveRabbitPayload(undefined, ctx);
+
         expect(result).toBeNull();
     });
 
@@ -18,6 +19,7 @@ describe('RabbitPayload Decorator', () => {
         const ctx: any = { switchToRpc: () => ({ getData: () => msg }) };
 
         const result = resolveRabbitPayload(undefined, ctx);
+
         expect(result).toEqual(payload);
     });
 
@@ -27,6 +29,7 @@ describe('RabbitPayload Decorator', () => {
         const ctx: any = { switchToRpc: () => ({ getData: () => msg }) };
 
         const name = resolveRabbitPayload('name', ctx);
+
         expect(name).toBe('alice');
     });
 
@@ -36,6 +39,7 @@ describe('RabbitPayload Decorator', () => {
         const ctx: any = { switchToRpc: () => ({ getData: () => msg }) };
 
         const result = resolveRabbitPayload(undefined, ctx);
+
         expect(result).toBe(raw);
     });
 
@@ -50,4 +54,3 @@ describe('RabbitPayload Decorator', () => {
         expect(id).toBe(3);
     });
 });
-

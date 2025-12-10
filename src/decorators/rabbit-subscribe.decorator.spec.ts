@@ -1,4 +1,5 @@
 import { RABBITMQ_SUBSCRIBE_METADATA } from '../constants';
+
 import { RabbitSubscribe } from './rabbit-subscribe.decorator';
 
 import type { RabbitSubscribeOptions } from '../interfaces/rabbitmq-options.interface';
@@ -16,18 +17,15 @@ describe('RabbitSubscribe Decorator', () => {
             }
         }
 
-        const metadata = Reflect.getMetadata(
-            RABBITMQ_SUBSCRIBE_METADATA,
-            TestClass.prototype.handleMessage,
-        );
+        const metadata = Reflect.getMetadata(RABBITMQ_SUBSCRIBE_METADATA, TestClass.prototype.handleMessage);
 
         expect(metadata).toEqual(options);
     });
 
     it('should set metadata with exchange option', () => {
         const options: RabbitSubscribeOptions = {
-            queue: 'test-queue',
             exchange: 'test-exchange',
+            queue: 'test-queue',
             routingKey: 'test.route',
         };
 
@@ -38,23 +36,20 @@ describe('RabbitSubscribe Decorator', () => {
             }
         }
 
-        const metadata = Reflect.getMetadata(
-            RABBITMQ_SUBSCRIBE_METADATA,
-            TestClass.prototype.handleMessage,
-        );
+        const metadata = Reflect.getMetadata(RABBITMQ_SUBSCRIBE_METADATA, TestClass.prototype.handleMessage);
 
         expect(metadata).toEqual(options);
     });
 
     it('should set metadata with all options', () => {
         const options: RabbitSubscribeOptions = {
-            queue: 'test-queue',
             exchange: 'test-exchange',
-            routingKey: 'test.route',
+            queue: 'test-queue',
             queueOptions: {
                 durable: true,
                 exclusive: false,
             },
+            routingKey: 'test.route',
         };
 
         class TestClass {
@@ -64,10 +59,7 @@ describe('RabbitSubscribe Decorator', () => {
             }
         }
 
-        const metadata = Reflect.getMetadata(
-            RABBITMQ_SUBSCRIBE_METADATA,
-            TestClass.prototype.handleMessage,
-        );
+        const metadata = Reflect.getMetadata(RABBITMQ_SUBSCRIBE_METADATA, TestClass.prototype.handleMessage);
 
         expect(metadata).toEqual(options);
     });
@@ -88,14 +80,8 @@ describe('RabbitSubscribe Decorator', () => {
             }
         }
 
-        const metadata1 = Reflect.getMetadata(
-            RABBITMQ_SUBSCRIBE_METADATA,
-            TestClass.prototype.handleMessage1,
-        );
-        const metadata2 = Reflect.getMetadata(
-            RABBITMQ_SUBSCRIBE_METADATA,
-            TestClass.prototype.handleMessage2,
-        );
+        const metadata1 = Reflect.getMetadata(RABBITMQ_SUBSCRIBE_METADATA, TestClass.prototype.handleMessage1);
+        const metadata2 = Reflect.getMetadata(RABBITMQ_SUBSCRIBE_METADATA, TestClass.prototype.handleMessage2);
 
         expect(metadata1).toEqual(options1);
         expect(metadata2).toEqual(options2);
@@ -113,9 +99,9 @@ describe('RabbitSubscribe Decorator', () => {
         }
 
         const instance = new TestClass();
+
         instance.handleMessage();
 
         expect(called).toBe(true);
     });
 });
-

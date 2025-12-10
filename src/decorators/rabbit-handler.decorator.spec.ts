@@ -1,11 +1,16 @@
-import { RabbitHandler, RABBIT_HANDLER_METADATA, RabbitHandlerOptions } from './rabbit-handler.decorator';
+import { RABBIT_HANDLER_METADATA } from '../constants';
+
+import { RabbitHandler } from './rabbit-handler.decorator';
+
+import type { RabbitHandlerOptions } from '../interfaces/rabbitmq-options.interface';
+
 import 'reflect-metadata';
 
 describe('RabbitHandler Decorator', () => {
     it('should set metadata on method with queue', () => {
         const options: RabbitHandlerOptions = {
-            queue: 'test-queue',
             noAck: false,
+            queue: 'test-queue',
         };
 
         class TestClass {
@@ -16,6 +21,7 @@ describe('RabbitHandler Decorator', () => {
         }
 
         const metadata = Reflect.getMetadata(RABBIT_HANDLER_METADATA, TestClass.prototype.handleMessage);
+
         expect(metadata).toEqual(options);
     });
 
@@ -33,14 +39,15 @@ describe('RabbitHandler Decorator', () => {
         }
 
         const metadata = Reflect.getMetadata(RABBIT_HANDLER_METADATA, TestClass.prototype.handleExchange);
+
         expect(metadata.exchange).toBe('test-exchange');
         expect(metadata.routingKey).toBe('test.routing.key');
     });
 
     it('should work with connection name', () => {
         const options: RabbitHandlerOptions = {
-            queue: 'conn-queue',
             connectionName: 'custom',
+            queue: 'conn-queue',
         };
 
         class TestClass {
@@ -51,13 +58,14 @@ describe('RabbitHandler Decorator', () => {
         }
 
         const metadata = Reflect.getMetadata(RABBIT_HANDLER_METADATA, TestClass.prototype.multiConnHandler);
+
         expect(metadata.connectionName).toBe('custom');
     });
 
     it('should work with prefetch count', () => {
         const options: RabbitHandlerOptions = {
-            queue: 'prefetch-queue',
             prefetchCount: 5,
+            queue: 'prefetch-queue',
         };
 
         class TestClass {
@@ -68,6 +76,7 @@ describe('RabbitHandler Decorator', () => {
         }
 
         const metadata = Reflect.getMetadata(RABBIT_HANDLER_METADATA, TestClass.prototype.prefetchHandler);
+
         expect(metadata.prefetchCount).toBe(5);
     });
 
@@ -82,6 +91,7 @@ describe('RabbitHandler Decorator', () => {
         }
 
         const metadata = Reflect.getMetadata(RABBIT_HANDLER_METADATA, TestClass.prototype.emptyHandler);
+
         expect(metadata).toEqual({});
     });
 
@@ -97,7 +107,7 @@ describe('RabbitHandler Decorator', () => {
                 return 'b';
             }
 
-            @RabbitHandler({ queue: 'queue-c', connectionName: 'conn-c' })
+            @RabbitHandler({ connectionName: 'conn-c', queue: 'queue-c' })
             handlerC() {
                 return 'c';
             }
@@ -114,12 +124,12 @@ describe('RabbitHandler Decorator', () => {
 
     it('should work with all options combined', () => {
         const options: RabbitHandlerOptions = {
-            queue: 'full-queue',
-            exchange: 'full-exchange',
-            routingKey: 'full.key',
             connectionName: 'full-conn',
+            exchange: 'full-exchange',
             noAck: true,
             prefetchCount: 20,
+            queue: 'full-queue',
+            routingKey: 'full.key',
         };
 
         class TestClass {
@@ -130,7 +140,7 @@ describe('RabbitHandler Decorator', () => {
         }
 
         const metadata = Reflect.getMetadata(RABBIT_HANDLER_METADATA, TestClass.prototype.fullHandler);
+
         expect(metadata).toEqual(options);
     });
 });
-

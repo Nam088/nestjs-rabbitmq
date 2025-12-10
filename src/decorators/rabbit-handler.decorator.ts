@@ -1,18 +1,29 @@
 import { SetMetadata } from '@nestjs/common';
 
-export const RABBIT_HANDLER_METADATA = 'RABBIT_HANDLER_METADATA';
+import { RABBIT_HANDLER_METADATA } from '../constants';
 
-export interface RabbitHandlerOptions {
-    connectionName?: string;
-    exchange?: string;
-    noAck?: boolean;
-    prefetchCount?: number;
-    queue?: string;
-    routingKey?: string;
-}
+import type { RabbitHandlerOptions } from '../interfaces/rabbitmq-options.interface';
 
 /**
- * Decorator to mark a method as a RabbitMQ message handler
- * @param options - Handler configuration options
+ * Decorator to mark a method as a RabbitMQ message handler.
+ * Use this decorator on methods that should consume messages from RabbitMQ queues.
+ *
+ * @param {RabbitHandlerOptions} options - Handler configuration options
+ * @returns {MethodDecorator} A method decorator that sets RabbitMQ handler metadata
+ *
+ * @example
+ * ```typescript
+ * class MessageService {
+ *   @RabbitHandler({
+ *     queue: 'my-queue',
+ *     exchange: 'my-exchange',
+ *     routingKey: 'my.routing.key',
+ *   })
+ *   async handleMessage(message: MyMessageType): Promise<void> {
+ *     console.log('Received:', message);
+ *   }
+ * }
+ * ```
  */
-export const RabbitHandler = (options: RabbitHandlerOptions) => SetMetadata(RABBIT_HANDLER_METADATA, options);
+export const RabbitHandler = (options: RabbitHandlerOptions): MethodDecorator =>
+    SetMetadata(RABBIT_HANDLER_METADATA, options);

@@ -1,4 +1,4 @@
-import { RabbitMessage, RabbitContext, resolveRabbitMessage } from './rabbit-message.decorator';
+import { RabbitContext, RabbitMessage, resolveRabbitMessage } from './rabbit-message.decorator';
 import 'reflect-metadata';
 
 describe('RabbitMessage Decorator', () => {
@@ -12,6 +12,7 @@ describe('RabbitMessage Decorator', () => {
         const ctx: any = { switchToRpc: () => ({ getData: () => msg }) };
 
         const result = resolveRabbitMessage(undefined, ctx);
+
         expect(result).toEqual(msg);
     });
 
@@ -20,6 +21,7 @@ describe('RabbitMessage Decorator', () => {
         const ctx: any = { switchToRpc: () => ({ getData: () => msg }) };
 
         const result = resolveRabbitMessage('nested', ctx);
+
         expect(result).toEqual({ a: 1 });
     });
 });

@@ -4,7 +4,7 @@ import { createNestJSConfig } from '@nam088/nestjs-eslint';
 
 export default createNestJSConfig({
   tsconfigRootDir: import.meta.dirname,
-  project: ['./tsconfig.json', './tsconfig.spec.json'],
+  project: ['./tsconfig.eslint.json'],
 
   // Custom perfectionist configuration
   perfectionist: {
@@ -20,8 +20,6 @@ export default createNestJSConfig({
     'coverage/**',
     '*.min.js',
     'node_modules/**',
-    '**/*.spec.ts',
-    '**/*.test.ts',
   ],
 
   // Custom project-specific rules
@@ -50,19 +48,23 @@ export default createNestJSConfig({
     'max-lines': ['warn', 800],
     'max-lines-per-function': ['warn', 150],
 
-  // Relax JSDoc requirements for development
-  'jsdoc/require-jsdoc': 'off',
-  'jsdoc/require-param': 'off',
-  'jsdoc/require-returns': 'off',
-  'lodash/prefer-lodash-method': 'off',
+    // Relax JSDoc requirements for development
+    'jsdoc/require-jsdoc': 'off',
+    'jsdoc/require-param': 'off',
+    'jsdoc/require-returns': 'off',
+    'lodash/prefer-lodash-method': 'off',
 
-  // Relax rules for test files
-  '@typescript-eslint/unbound-method': 'off',
-  '@typescript-eslint/no-empty-function': 'off',
-  '@typescript-eslint/no-require-imports': 'off',
-  'max-nested-callbacks': 'off',
-  'security/detect-non-literal-regexp': 'off',
-},
+    // Relax rules for test files
+    '@typescript-eslint/unbound-method': 'off',
+    '@typescript-eslint/no-empty-function': 'off',
+    '@typescript-eslint/no-require-imports': 'off',
+    'max-nested-callbacks': 'off',
+    'security/detect-non-literal-regexp': 'off',
+    'prefer-destructuring': 'off',
+    'max-lines-per-function': 'off',
+    'sonarjs/no-identical-functions': 'off',
+    'unused-imports/no-unused-vars': 'off',
+  },
 
   // Custom import groups for this project
   importGroups: {

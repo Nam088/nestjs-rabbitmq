@@ -21,3 +21,6 @@ export * from './rabbitmq.module';
 export * from './services/rabbitmq.service';
 
 export * from './services/service-discovery.service';
+
+// Utilities
+export * from './utils/log-utils';

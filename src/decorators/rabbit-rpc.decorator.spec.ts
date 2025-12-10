@@ -1,12 +1,17 @@
-import { RabbitRPC, RABBIT_RPC_METADATA, RabbitRPCOptions } from './rabbit-rpc.decorator';
+import { RABBIT_RPC_METADATA } from '../constants';
+
+import { RabbitRPC } from './rabbit-rpc.decorator';
+
+import type { RabbitRPCOptions } from '../interfaces/rabbitmq-options.interface';
+
 import 'reflect-metadata';
 
 describe('RabbitRPC Decorator', () => {
     it('should set metadata on method', () => {
         const options: RabbitRPCOptions = {
-            queue: 'test-rpc-queue',
             noAck: false,
             prefetchCount: 1,
+            queue: 'test-rpc-queue',
         };
 
         class TestClass {
@@ -17,6 +22,7 @@ describe('RabbitRPC Decorator', () => {
         }
 
         const metadata = Reflect.getMetadata(RABBIT_RPC_METADATA, TestClass.prototype.handleRPC);
+
         expect(metadata).toEqual(options);
     });
 
@@ -33,14 +39,15 @@ describe('RabbitRPC Decorator', () => {
         }
 
         const metadata = Reflect.getMetadata(RABBIT_RPC_METADATA, TestClass.prototype.simpleHandler);
+
         expect(metadata).toEqual(options);
         expect(metadata.queue).toBe('simple-queue');
     });
 
     it('should work with connection name', () => {
         const options: RabbitRPCOptions = {
-            queue: 'multi-conn-queue',
             connectionName: 'secondary',
+            queue: 'multi-conn-queue',
         };
 
         class TestClass {
@@ -51,14 +58,15 @@ describe('RabbitRPC Decorator', () => {
         }
 
         const metadata = Reflect.getMetadata(RABBIT_RPC_METADATA, TestClass.prototype.multiConnHandler);
+
         expect(metadata.connectionName).toBe('secondary');
     });
 
     it('should work with prefetch settings', () => {
         const options: RabbitRPCOptions = {
-            queue: 'prefetch-queue',
-            prefetchCount: 10,
             noAck: true,
+            prefetchCount: 10,
+            queue: 'prefetch-queue',
         };
 
         class TestClass {
@@ -69,6 +77,7 @@ describe('RabbitRPC Decorator', () => {
         }
 
         const metadata = Reflect.getMetadata(RABBIT_RPC_METADATA, TestClass.prototype.prefetchHandler);
+
         expect(metadata.prefetchCount).toBe(10);
         expect(metadata.noAck).toBe(true);
     });
@@ -93,4 +102,3 @@ describe('RabbitRPC Decorator', () => {
         expect(metadata2.queue).toBe('queue2');
     });
 });
-
