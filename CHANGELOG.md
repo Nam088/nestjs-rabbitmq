@@ -1,3 +1,16 @@
+# [1.2.0](https://github.com/Nam088/nestjs-rabbitmq/compare/v1.1.4...v1.2.0) (2025-12-10)
+
+
+### Bug Fixes
+
+* trigger release build ([4923b1f](https://github.com/Nam088/nestjs-rabbitmq/commit/4923b1f19e86251400322ba081fb943749ccbc18))
+* trigger release workflow ([4c3f274](https://github.com/Nam088/nestjs-rabbitmq/commit/4c3f274fa0ff3be72368ec5a8a78f9763e287ab2))
+
+
+### Features
+
+* add comprehensive JSDoc documentation with types ([c03a227](https://github.com/Nam088/nestjs-rabbitmq/commit/c03a2272825d08e5c0c20525e84e062532279022))
+
 # 1.0.0 (2025-12-10)
 
 
